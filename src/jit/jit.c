@@ -1,10 +1,41 @@
 #include "jit.h"
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
 
+#ifdef _WIN32
+    #include <windows.h>
+#else
+    #include <sys/mman.h>
+    #include <unistd.h>
+#endif
+
+// 跨平台内存分配函数
+static void* allocate_executable_memory(size_t size) {
+#ifdef _WIN32
+    return VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+#else
+    return mmap(NULL, size, PROT_READ | PROT_WRITE | PROT_EXEC,
+                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+#endif
+}
+
+static void free_executable_memory(void* ptr, size_t size) {
+#ifdef _WIN32
+    VirtualFree(ptr, 0, MEM_RELEASE);
+#else
+    munmap(ptr, size);
+#endif
+}
+
+static bool protect_executable_memory(void* ptr, size_t size) {
+#ifdef _WIN32
+    DWORD old_protect;
+    return VirtualProtect(ptr, size, PAGE_EXECUTE_READ, &old_protect) != 0;
+#else
+    return mprotect(ptr, size, PROT_READ | PROT_EXEC) == 0;
+#endif
+}
 // 简化的x86-64机器码生成
-static void emit_mov_rax_imm(uint8_t** code, int64_t value) {
     // mov rax, imm64
     *(*code)++ = 0x48;
     *(*code)++ = 0xb8;
@@ -24,7 +55,7 @@ static void emit_ret(uint8_t** code) {
     *(*code)++ = 0xc3;
 }
 
-void ms_jit_init(ms_jit_compiler_t* jit) {
+static void emit_mov_rax_imm(uint8_t** code, int64_t value) {
     jit->hotspots = NULL;
     jit->hotspot_count = 0;
     jit->hotspot_capacity = 0;
@@ -35,7 +66,7 @@ void ms_jit_init(ms_jit_compiler_t* jit) {
 void ms_jit_free(ms_jit_compiler_t* jit) {
     for (int i = 0; i < jit->hotspot_count; i++) {
         if (jit->hotspots[i].native_code) {
-            munmap(jit->hotspots[i].native_code, jit->hotspots[i].native_size);
+            free_executable_memory(jit->hotspots[i].native_code, jit->hotspots[i].native_size);
         }
     }
     free(jit->hotspots);
@@ -85,10 +116,9 @@ void ms_jit_profile(ms_jit_compiler_t* jit, uint8_t* ip) {
 bool ms_jit_compile_hotspot(ms_jit_compiler_t* jit, ms_hotspot_t* hotspot) {
     // 分配可执行内存
     size_t code_size = 1024; // 简化：固定大小
-    void* code = mmap(NULL, code_size, PROT_READ | PROT_WRITE | PROT_EXEC,
-                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    void* code = allocate_executable_memory(code_size);
     
-    if (code == MAP_FAILED) {
+    if (code == NULL) {
         return false;
     }
     
@@ -126,7 +156,10 @@ compile_done:
     hotspot->native_size = code_size;
     
     // 设置内存为只读+可执行
-    mprotect(code, code_size, PROT_READ | PROT_EXEC);
+    if (!protect_executable_memory(code, code_size)) {
+        free_executable_memory(code, code_size);
+        return false;
+    }
     
     return true;
 }
