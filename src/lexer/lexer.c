@@ -119,7 +119,12 @@ static ms_token_type_t check_keyword(const char* start, int length,
 
 static ms_token_type_t identifier_type(ms_lexer_t* lexer) {
     switch (lexer->start[0]) {
-        case 'a': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "nd", TOKEN_AND);
+        case 'a': 
+            if (lexer->current - lexer->start == 2) {
+                return check_keyword(lexer->start + 1, 1, "s", TOKEN_AS);
+            }
+            return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "nd", TOKEN_AND);
+        case 'b': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "reak", TOKEN_BREAK);
         case 'c': 
             if (lexer->current - lexer->start > 1) {
                 switch (lexer->start[1]) {
@@ -154,12 +159,6 @@ static ms_token_type_t identifier_type(ms_lexer_t* lexer) {
         case 't': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "rue", TOKEN_TRUE);
         case 'v': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "ar", TOKEN_VAR);
         case 'w': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "hile", TOKEN_WHILE);
-        case 'b': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "reak", TOKEN_BREAK);
-        case 'a': 
-            if (lexer->current - lexer->start == 2) {
-                return check_keyword(lexer->start + 1, 1, "s", TOKEN_AS);
-            }
-            return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "nd", TOKEN_AND);
     }
     return TOKEN_IDENTIFIER;
 }
