@@ -5,6 +5,24 @@
 #include "../lexer/lexer.h"
 #include <stdint.h>
 
+// 字节码块
+typedef struct {
+    int count;
+    int capacity;
+    uint8_t* code;
+    int* lines;
+    ms_value_t* constants;
+    int constant_count;
+    int constant_capacity;
+} ms_chunk_t;
+
+// 函数对象
+typedef struct {
+    ms_chunk_t* chunk;
+    int arity;  // 参数个数
+    char* name;
+} ms_function_t;
+
 // 字节码指令
 typedef enum {
     OP_CONSTANT,
@@ -17,6 +35,10 @@ typedef enum {
     OP_GET_GLOBAL,
     OP_DEFINE_GLOBAL,
     OP_SET_GLOBAL,
+    OP_GET_UPVALUE,
+    OP_SET_UPVALUE,
+    OP_GET_PROPERTY,
+    OP_SET_PROPERTY,
     OP_EQUAL,
     OP_GREATER,
     OP_LESS,
@@ -24,26 +46,26 @@ typedef enum {
     OP_SUBTRACT,
     OP_MULTIPLY,
     OP_DIVIDE,
+    OP_MODULO,
     OP_NOT,
     OP_NEGATE,
     OP_PRINT,
     OP_JUMP,
     OP_JUMP_IF_FALSE,
+    OP_JUMP_IF_TRUE,
     OP_LOOP,
     OP_CALL,
+    OP_FUNCTION,
+    OP_CLOSURE,
+    OP_CLOSE_UPVALUE,
     OP_RETURN,
+    OP_CLASS,
+    OP_METHOD,
+    OP_BUILD_LIST,
+    OP_BUILD_DICT,
+    OP_INDEX_GET,
+    OP_INDEX_SET,
 } ms_opcode_t;
-
-// 字节码块
-typedef struct {
-    int count;
-    int capacity;
-    uint8_t* code;
-    int* lines;
-    ms_value_t* constants;
-    int constant_count;
-    int constant_capacity;
-} ms_chunk_t;
 
 // 调用帧
 typedef struct {
@@ -57,6 +79,10 @@ typedef struct ms_global {
     ms_value_t value;
     struct ms_global* next;
 } ms_global_t;
+
+// 名称表（用于编译时）
+extern char* name_table_names[256];
+extern int name_table_count;
 
 // 虚拟机结构
 struct ms_vm {

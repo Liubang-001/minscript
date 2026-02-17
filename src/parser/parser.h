@@ -12,6 +12,8 @@ typedef struct {
     bool panic_mode;
     ms_lexer_t* lexer;
     ms_chunk_t* compiling_chunk;
+    ms_chunk_t* function_chunks[256];  // 存储函数的chunk
+    int function_chunk_count;
 } ms_parser_t;
 
 // 优先级

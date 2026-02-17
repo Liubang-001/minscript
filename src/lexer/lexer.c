@@ -68,11 +68,11 @@ static void skip_whitespace(ms_lexer_t* lexer) {
                 advance(lexer);
                 break;
             case '#':
-                // 注释，跳过到行尾
+                // 注释，跳过到行尾但不消费换行符
                 while (peek(lexer) != '\n' && !is_at_end(lexer)) {
                     advance(lexer);
                 }
-                break;
+                return;
             default:
                 return;
         }
@@ -133,13 +133,26 @@ static ms_token_type_t identifier_type(ms_lexer_t* lexer) {
                 }
             }
             break;
-        case 'e': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "lse", TOKEN_ELSE);
+        case 'd': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "ef", TOKEN_DEF);
+        case 'e': 
+            if (lexer->current - lexer->start > 1) {
+                if (lexer->start[1] == 'l') {
+                    if (lexer->current - lexer->start == 4 && 
+                        lexer->start[2] == 'i' && lexer->start[3] == 'f') {
+                        return TOKEN_ELIF;
+                    }
+                    if (lexer->current - lexer->start == 4 && 
+                        lexer->start[2] == 's' && lexer->start[3] == 'e') {
+                        return TOKEN_ELSE;
+                    }
+                }
+            }
+            return TOKEN_IDENTIFIER;
         case 'f':
             if (lexer->current - lexer->start > 1) {
                 switch (lexer->start[1]) {
                     case 'a': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "lse", TOKEN_FALSE);
                     case 'o': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "r", TOKEN_FOR);
-                    case 'u': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "nc", TOKEN_FUNC);
                     case 'r': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "om", TOKEN_FROM);
                 }
             }
@@ -149,13 +162,29 @@ static ms_token_type_t identifier_type(ms_lexer_t* lexer) {
                 switch (lexer->start[1]) {
                     case 'f': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "", TOKEN_IF);
                     case 'm': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "port", TOKEN_IMPORT);
+                    case 'n': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "", TOKEN_IN);
+                    case 's': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "", TOKEN_IS);
                 }
             }
             break;
-        case 'n': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "il", TOKEN_NIL);
+        case 'n':
+            if (lexer->current - lexer->start > 1) {
+                switch (lexer->start[1]) {
+                    case 'i': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "l", TOKEN_NIL);
+                    case 'o': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "t", TOKEN_NOT);
+                }
+            }
+            break;
         case 'o': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "r", TOKEN_OR);
-        case 'p': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "rint", TOKEN_PRINT);
+        case 'p': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "ass", TOKEN_PASS);
         case 'r': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "eturn", TOKEN_RETURN);
+        case 'F':
+            if (lexer->current - lexer->start > 1) {
+                return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "alse", TOKEN_FALSE);
+            }
+            break;
+        case 'N': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "one", TOKEN_NONE);
+        case 'T': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "rue", TOKEN_TRUE);
         case 't': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "rue", TOKEN_TRUE);
         case 'v': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "ar", TOKEN_VAR);
         case 'w': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "hile", TOKEN_WHILE);
@@ -185,13 +214,82 @@ ms_token_t ms_lexer_scan_token(ms_lexer_t* lexer) {
     // 处理待处理的DEDENT token
     if (lexer->pending_dedents > 0) {
         lexer->pending_dedents--;
+        lexer->start = lexer->current;
         return make_token(lexer, TOKEN_DEDENT);
+    }
+
+    // 处理行首的缩进
+    if (lexer->at_line_start) {
+        lexer->at_line_start = false;
+        
+        // 计算当前行的缩进
+        int indent = 0;
+        while (peek(lexer) == ' ' || peek(lexer) == '\t') {
+            if (peek(lexer) == ' ') indent++;
+            else indent += 4; // tab = 4 spaces
+            advance(lexer);
+        }
+        
+        lexer->start = lexer->current;
+        
+        // 跳过空行和注释行
+        if (peek(lexer) == '\n' || peek(lexer) == '#' || is_at_end(lexer)) {
+            // 如果是注释，跳过到行尾
+            if (peek(lexer) == '#') {
+                while (peek(lexer) != '\n' && !is_at_end(lexer)) {
+                    advance(lexer);
+                }
+            }
+            // 如果是换行符，处理它
+            if (peek(lexer) == '\n') {
+                advance(lexer);
+                lexer->line++;
+                lexer->column = 1;
+                lexer->at_line_start = true;
+                lexer->start = lexer->current;
+                return ms_lexer_scan_token(lexer); // 递归处理下一行
+            }
+            if (is_at_end(lexer)) return make_token(lexer, TOKEN_EOF);
+        } else {
+            // 比较缩进级别
+            int current_indent = lexer->indent_stack[lexer->indent_level];
+            
+            if (indent > current_indent) {
+                // 增加缩进
+                lexer->indent_level++;
+                lexer->indent_stack[lexer->indent_level] = indent;
+                return make_token(lexer, TOKEN_INDENT);
+            } else if (indent < current_indent) {
+                // 减少缩进
+                while (lexer->indent_level > 0 && 
+                       lexer->indent_stack[lexer->indent_level] > indent) {
+                    lexer->indent_level--;
+                    lexer->pending_dedents++;
+                }
+                
+                if (lexer->indent_stack[lexer->indent_level] != indent) {
+                    return error_token(lexer, "Indentation error.");
+                }
+                
+                if (lexer->pending_dedents > 0) {
+                    lexer->pending_dedents--;
+                    return make_token(lexer, TOKEN_DEDENT);
+                }
+            }
+        }
     }
 
     skip_whitespace(lexer);
     lexer->start = lexer->current;
 
-    if (is_at_end(lexer)) return make_token(lexer, TOKEN_EOF);
+    if (is_at_end(lexer)) {
+        // 文件结束时生成所有待处理的DEDENT
+        if (lexer->indent_level > 0) {
+            lexer->indent_level--;
+            return make_token(lexer, TOKEN_DEDENT);
+        }
+        return make_token(lexer, TOKEN_EOF);
+    }
 
     char c = advance(lexer);
 
@@ -212,6 +310,7 @@ ms_token_t ms_lexer_scan_token(ms_lexer_t* lexer) {
         case ';': return make_token(lexer, TOKEN_SEMICOLON);
         case '/': return make_token(lexer, TOKEN_SLASH);
         case '*': return make_token(lexer, TOKEN_STAR);
+        case '%': return make_token(lexer, TOKEN_PERCENT);
         case ':': return make_token(lexer, TOKEN_COLON);
         case '!':
             return make_token(lexer, match(lexer, '=') ? TOKEN_BANG_EQUAL : TOKEN_BANG);

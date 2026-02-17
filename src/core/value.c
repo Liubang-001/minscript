@@ -41,7 +41,9 @@ ms_value_t ms_value_string(const char* str) {
 ms_value_t ms_value_native_func(ms_native_fn_t func) {
     ms_value_t value;
     value.type = MS_VAL_NATIVE_FUNC;
-    // 需要分配native_func结构
+    value.as.native_func = malloc(sizeof(ms_native_func_t));
+    value.as.native_func->func = func;
+    value.as.native_func->name = NULL;
     return value;
 }
 

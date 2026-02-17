@@ -79,4 +79,3 @@ echo 运行测试:
 echo   miniscript.exe examples\hello.ms
 echo   test_runner.bat
 echo.
-pause

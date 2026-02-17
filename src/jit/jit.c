@@ -35,7 +35,9 @@ static bool protect_executable_memory(void* ptr, size_t size) {
     return mprotect(ptr, size, PROT_READ | PROT_EXEC) == 0;
 #endif
 }
+
 // 简化的x86-64机器码生成
+static void emit_mov_rax_imm(uint8_t** code, int64_t value) {
     // mov rax, imm64
     *(*code)++ = 0x48;
     *(*code)++ = 0xb8;
@@ -55,7 +57,7 @@ static void emit_ret(uint8_t** code) {
     *(*code)++ = 0xc3;
 }
 
-static void emit_mov_rax_imm(uint8_t** code, int64_t value) {
+void ms_jit_init(ms_jit_compiler_t* jit) {
     jit->hotspots = NULL;
     jit->hotspot_count = 0;
     jit->hotspot_capacity = 0;

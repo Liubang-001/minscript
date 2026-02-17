@@ -38,7 +38,27 @@ static void run_file(ms_vm_t* vm, const char* path) {
 }
 
 // 内置函数示例
+static ms_value_t builtin_print(ms_vm_t* vm, int argc, ms_value_t* args) {
+    for (int i = 0; i < argc; i++) {
+        if (i > 0) printf(" ");
+        ms_value_t value = args[i];
+        switch (value.type) {
+            case MS_VAL_BOOL:
+                printf(ms_value_as_bool(value) ? "True" : "False");
+                break;
+            case MS_VAL_NIL: printf("None"); break;
+            case MS_VAL_INT: printf("%lld", (long long)ms_value_as_int(value)); break;
+            case MS_VAL_FLOAT: printf("%g", ms_value_as_float(value)); break;
+            case MS_VAL_STRING: printf("%s", ms_value_as_string(value)); break;
+            default: printf("<object>"); break;
+        }
+    }
+    printf("\n");
+    return ms_value_nil();
+}
+
 static ms_value_t builtin_len(ms_vm_t* vm, int argc, ms_value_t* args) {
+    (void)vm;
     if (argc != 1) {
         return ms_value_nil();
     }
@@ -53,11 +73,12 @@ static ms_value_t builtin_len(ms_vm_t* vm, int argc, ms_value_t* args) {
 int main(int argc, const char* argv[]) {
     ms_vm_t* vm = ms_vm_new();
     
-    // 注册内置函数
+    // 注册内置函数 (Python 3 style)
+    ms_vm_register_function(vm, "print", builtin_print);
     ms_vm_register_function(vm, "len", builtin_len);
     
     if (argc == 1) {
-        printf("MiniScript v%d.%d.%d\n", 
+        printf("MiniScript v%d.%d.%d (Python 3 syntax)\n", 
                MS_VERSION_MAJOR, MS_VERSION_MINOR, MS_VERSION_PATCH);
         repl(vm);
     } else if (argc == 2) {

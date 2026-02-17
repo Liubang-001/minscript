@@ -4,6 +4,10 @@
 #include <string.h>
 #include <stdarg.h>
 
+// 外部名称表
+char* name_table_names[256];
+int name_table_count = 0;
+
 static void runtime_error(ms_vm_t* vm, const char* format, ...) {
     va_list args;
     va_start(args, format);
@@ -44,13 +48,21 @@ static ms_result_t run(ms_vm_t* vm) {
 
 #define BINARY_OP(value_type, op) \
     do { \
-        if (!ms_value_is_int(peek(vm, 0)) || !ms_value_is_int(peek(vm, 1))) { \
+        ms_value_t b = peek(vm, 0); \
+        ms_value_t a = peek(vm, 1); \
+        if (ms_value_is_int(a) && ms_value_is_int(b)) { \
+            ms_vm_pop(vm); \
+            ms_vm_pop(vm); \
+            ms_vm_push(vm, value_type(ms_value_as_int(a) op ms_value_as_int(b))); \
+        } else if ((ms_value_is_int(a) || ms_value_is_float(a)) && \
+                   (ms_value_is_int(b) || ms_value_is_float(b))) { \
+            ms_vm_pop(vm); \
+            ms_vm_pop(vm); \
+            ms_vm_push(vm, ms_value_float(ms_value_as_float(a) op ms_value_as_float(b))); \
+        } else { \
             runtime_error(vm, "Operands must be numbers."); \
             return MS_RESULT_RUNTIME_ERROR; \
         } \
-        int64_t b = ms_value_as_int(ms_vm_pop(vm)); \
-        int64_t a = ms_value_as_int(ms_vm_pop(vm)); \
-        ms_vm_push(vm, value_type(a op b)); \
     } while (false)
 
     for (;;) {
@@ -65,6 +77,75 @@ static ms_result_t run(ms_vm_t* vm) {
             case OP_TRUE: ms_vm_push(vm, ms_value_bool(true)); break;
             case OP_FALSE: ms_vm_push(vm, ms_value_bool(false)); break;
             case OP_POP: ms_vm_pop(vm); break;
+            case OP_GET_LOCAL: {
+                uint8_t slot = READ_BYTE();
+                ms_vm_push(vm, frame->slots[slot]);
+                break;
+            }
+            case OP_SET_LOCAL: {
+                uint8_t slot = READ_BYTE();
+                frame->slots[slot] = peek(vm, 0);
+                break;
+            }
+            case OP_GET_GLOBAL: {
+                uint8_t name_index = READ_BYTE();
+                if (name_index >= name_table_count) {
+                    runtime_error(vm, "Undefined variable.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                char* name = name_table_names[name_index];
+                ms_global_t* current = vm->globals;
+                while (current != NULL) {
+                    if (strcmp(current->name, name) == 0) {
+                        ms_vm_push(vm, current->value);
+                        goto found_global;
+                    }
+                    current = current->next;
+                }
+                
+                runtime_error(vm, "Undefined variable '%s'.", name);
+                return MS_RESULT_RUNTIME_ERROR;
+                
+            found_global:
+                break;
+            }
+            case OP_DEFINE_GLOBAL: {
+                uint8_t name_index = READ_BYTE();
+                if (name_index >= name_table_count) {
+                    runtime_error(vm, "Invalid variable name index.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                char* name = name_table_names[name_index];
+                ms_vm_set_global(vm, name, peek(vm, 0));
+                break;
+            }
+            case OP_SET_GLOBAL: {
+                uint8_t name_index = READ_BYTE();
+                if (name_index >= name_table_count) {
+                    runtime_error(vm, "Invalid variable name index.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                char* name = name_table_names[name_index];
+                
+                // 检查变量是否存在
+                ms_global_t* current = vm->globals;
+                while (current != NULL) {
+                    if (strcmp(current->name, name) == 0) {
+                        current->value = peek(vm, 0);
+                        goto set_global_done;
+                    }
+                    current = current->next;
+                }
+                
+                runtime_error(vm, "Undefined variable '%s'.", name);
+                return MS_RESULT_RUNTIME_ERROR;
+                
+            set_global_done:
+                break;
+            }
             case OP_EQUAL: {
                 ms_value_t b = ms_vm_pop(vm);
                 ms_value_t a = ms_vm_pop(vm);
@@ -109,15 +190,92 @@ static ms_result_t run(ms_vm_t* vm) {
                 ms_value_t value = ms_vm_pop(vm);
                 switch (value.type) {
                     case MS_VAL_BOOL:
-                        printf(ms_value_as_bool(value) ? "true" : "false");
+                        printf(ms_value_as_bool(value) ? "True" : "False");
                         break;
-                    case MS_VAL_NIL: printf("nil"); break;
+                    case MS_VAL_NIL: printf("None"); break;
                     case MS_VAL_INT: printf("%lld", ms_value_as_int(value)); break;
                     case MS_VAL_FLOAT: printf("%g", ms_value_as_float(value)); break;
                     case MS_VAL_STRING: printf("%s", ms_value_as_string(value)); break;
                     default: printf("<object>"); break;
                 }
                 printf("\n");
+                break;
+            }
+            case OP_JUMP: {
+                uint16_t offset = READ_SHORT();
+                frame->ip += offset;
+                break;
+            }
+            case OP_JUMP_IF_FALSE: {
+                uint16_t offset = READ_SHORT();
+                if (is_falsey(peek(vm, 0))) frame->ip += offset;
+                break;
+            }
+            case OP_JUMP_IF_TRUE: {
+                uint16_t offset = READ_SHORT();
+                if (!is_falsey(peek(vm, 0))) frame->ip += offset;
+                break;
+            }
+            case OP_LOOP: {
+                uint16_t offset = READ_SHORT();
+                frame->ip -= offset;
+                break;
+            }
+            case OP_CALL: {
+                uint8_t arg_count = READ_BYTE();
+                ms_value_t func_val = peek(vm, arg_count);
+                
+                if (func_val.type == MS_VAL_NATIVE_FUNC && func_val.as.native_func != NULL) {
+                    // 原生函数调用
+                    ms_value_t* args = vm->stack_top - arg_count;
+                    ms_value_t result = func_val.as.native_func->func(vm, arg_count, args);
+                    vm->stack_top -= arg_count + 1;
+                    ms_vm_push(vm, result);
+                } else if (func_val.type == MS_VAL_FUNCTION) {
+                    // 用户定义的函数调用
+                    ms_function_t* function = func_val.as.function;
+                    
+                    if (arg_count != function->arity) {
+                        runtime_error(vm, "Expected %d arguments but got %d.", function->arity, arg_count);
+                        return MS_RESULT_RUNTIME_ERROR;
+                    }
+                    
+                    if (vm->frame_count >= 64) {
+                        runtime_error(vm, "Stack overflow.");
+                        return MS_RESULT_RUNTIME_ERROR;
+                    }
+                    
+                    // 保存栈指针位置（函数和参数之前）
+                    ms_value_t* call_stack_base = vm->stack_top - arg_count - 1;
+                    
+                    // 创建新的调用帧
+                    ms_call_frame_t* new_frame = &vm->frames[vm->frame_count++];
+                    new_frame->ip = function->chunk->code;
+                    new_frame->slots = vm->stack_top - arg_count;
+                    
+                    // 保存当前的chunk
+                    ms_chunk_t* prev_chunk = vm->chunk;
+                    vm->chunk = function->chunk;
+                    
+                    // 执行函数
+                    ms_result_t result = run(vm);
+                    
+                    // 恢复chunk
+                    vm->chunk = prev_chunk;
+                    vm->frame_count--;
+                    
+                    if (result != MS_RESULT_OK) {
+                        return result;
+                    }
+                    
+                    // 函数返回值应该在栈上，清理函数和参数
+                    ms_value_t return_value = ms_vm_pop(vm);
+                    vm->stack_top = call_stack_base;  // 恢复栈指针到函数调用前
+                    ms_vm_push(vm, return_value);      // 推送返回值
+                } else {
+                    runtime_error(vm, "Can only call functions.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
                 break;
             }
             case OP_RETURN: {

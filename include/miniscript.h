@@ -31,6 +31,16 @@ extern "C" {
 typedef struct ms_vm ms_vm_t;
 typedef struct ms_value ms_value_t;
 typedef struct ms_object ms_object_t;
+typedef struct ms_native_func ms_native_func_t;
+
+// 原生函数类型
+typedef ms_value_t (*ms_native_fn_t)(ms_vm_t* vm, int argc, ms_value_t* args);
+
+// 原生函数结构
+struct ms_native_func {
+    ms_native_fn_t func;
+    char* name;
+};
 
 // 值类型
 typedef enum {
@@ -41,7 +51,11 @@ typedef enum {
     MS_VAL_STRING,
     MS_VAL_FUNCTION,
     MS_VAL_NATIVE_FUNC,
-    MS_VAL_OBJECT
+    MS_VAL_OBJECT,
+    MS_VAL_LIST,
+    MS_VAL_DICT,
+    MS_VAL_CLASS,
+    MS_VAL_INSTANCE
 } ms_value_type_t;
 
 // 值结构
@@ -53,13 +67,10 @@ struct ms_value {
         double floating;
         char* string;
         struct ms_function* function;
-        struct ms_native_func* native_func;
+        ms_native_func_t* native_func;
         ms_object_t* object;
     } as;
 };
-
-// 原生函数类型
-typedef ms_value_t (*ms_native_fn_t)(ms_vm_t* vm, int argc, ms_value_t* args);
 
 // VM结果类型
 typedef enum {

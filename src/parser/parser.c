@@ -3,6 +3,21 @@
 #include <stdlib.h>
 #include <string.h>
 
+// 外部名称表声明
+extern char* name_table_names[256];
+extern int name_table_count;
+
+// 前向声明
+static uint8_t add_name(const char* name, int length);
+static void expression(ms_parser_t* parser);
+static void statement(ms_parser_t* parser);
+static void declaration(ms_parser_t* parser);
+static ms_parse_rule_t* get_rule(ms_token_type_t type);
+static void parse_precedence(ms_parser_t* parser, ms_precedence_t precedence);
+static int emit_jump(ms_parser_t* parser, uint8_t instruction);
+static void patch_jump(ms_parser_t* parser, int offset);
+static void emit_loop(ms_parser_t* parser, int loop_start);
+
 static ms_chunk_t* current_chunk(ms_parser_t* parser) {
     return parser->compiling_chunk;
 }
@@ -90,6 +105,17 @@ static void emit_constant(ms_parser_t* parser, ms_value_t value) {
     emit_bytes(parser, OP_CONSTANT, make_constant(parser, value));
 }
 
+static ms_chunk_t* create_function_chunk(ms_parser_t* parser) {
+    if (parser->function_chunk_count >= 256) {
+        return NULL;
+    }
+    
+    ms_chunk_t* chunk = malloc(sizeof(ms_chunk_t));
+    ms_chunk_init(chunk);
+    parser->function_chunks[parser->function_chunk_count++] = chunk;
+    return chunk;
+}
+
 static void end_compiler(ms_parser_t* parser) {
     emit_return(parser);
 }
@@ -100,6 +126,96 @@ static void statement(ms_parser_t* parser);
 static void declaration(ms_parser_t* parser);
 static ms_parse_rule_t* get_rule(ms_token_type_t type);
 static void parse_precedence(ms_parser_t* parser, ms_precedence_t precedence);
+static int emit_jump(ms_parser_t* parser, uint8_t instruction);
+static void patch_jump(ms_parser_t* parser, int offset);
+static void emit_loop(ms_parser_t* parser, int loop_start);
+
+// 局部变量管理
+typedef struct {
+    ms_token_t name;
+    int depth;
+} ms_local_t;
+
+static ms_local_t locals[256];
+static int local_count = 0;
+static int scope_depth = 0;
+
+static void begin_scope() {
+    scope_depth++;
+}
+
+static void end_scope(ms_parser_t* parser) {
+    scope_depth--;
+    
+    while (local_count > 0 && locals[local_count - 1].depth > scope_depth) {
+        emit_byte(parser, OP_POP);
+        local_count--;
+    }
+}
+
+static bool identifiers_equal(ms_token_t* a, ms_token_t* b) {
+    if (a->length != b->length) return false;
+    return memcmp(a->start, b->start, a->length) == 0;
+}
+
+static int resolve_local(ms_parser_t* parser, ms_token_t* name) {
+    for (int i = local_count - 1; i >= 0; i--) {
+        ms_local_t* local = &locals[i];
+        if (identifiers_equal(name, &local->name)) {
+            if (local->depth == -1) {
+                error(parser, "Can't read local variable in its own initializer.");
+            }
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void add_local(ms_parser_t* parser, ms_token_t name) {
+    if (local_count == 256) {
+        error(parser, "Too many local variables in function.");
+        return;
+    }
+    
+    ms_local_t* local = &locals[local_count++];
+    local->name = name;
+    local->depth = -1;
+}
+
+static void mark_initialized() {
+    if (scope_depth == 0) return;
+    locals[local_count - 1].depth = scope_depth;
+}
+
+static uint8_t parse_variable(ms_parser_t* parser, const char* error_message) {
+    consume(parser, TOKEN_IDENTIFIER, error_message);
+    
+    if (scope_depth > 0) {
+        // 局部变量
+        for (int i = local_count - 1; i >= 0; i--) {
+            ms_local_t* local = &locals[i];
+            if (local->depth != -1 && local->depth < scope_depth) {
+                break;
+            }
+            if (identifiers_equal(&parser->previous, &local->name)) {
+                error(parser, "Already a variable with this name in this scope.");
+            }
+        }
+        add_local(parser, parser->previous);
+        return 0;
+    }
+    
+    return add_name(parser->previous.start, parser->previous.length);
+}
+
+static void define_variable(ms_parser_t* parser, uint8_t global) {
+    if (scope_depth > 0) {
+        mark_initialized();
+        return;
+    }
+    
+    emit_bytes(parser, OP_DEFINE_GLOBAL, global);
+}
 
 static void binary(ms_parser_t* parser) {
     ms_token_type_t operator_type = parser->previous.type;
@@ -125,6 +241,7 @@ static void literal(ms_parser_t* parser) {
     switch (parser->previous.type) {
         case TOKEN_FALSE: emit_byte(parser, OP_FALSE); break;
         case TOKEN_NIL: emit_byte(parser, OP_NIL); break;
+        case TOKEN_NONE: emit_byte(parser, OP_NIL); break;  // Python 3 None
         case TOKEN_TRUE: emit_byte(parser, OP_TRUE); break;
         default: return; // Unreachable.
     }
@@ -135,9 +252,74 @@ static void grouping(ms_parser_t* parser) {
     consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
 }
 
+static void call(ms_parser_t* parser) {
+    uint8_t arg_count = 0;
+    if (!check(parser, TOKEN_RIGHT_PAREN)) {
+        do {
+            expression(parser);
+            if (arg_count == 255) {
+                error(parser, "Can't have more than 255 arguments.");
+            }
+            arg_count++;
+        } while (match(parser, TOKEN_COMMA));
+    }
+    consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
+    
+    emit_bytes(parser, OP_CALL, arg_count);
+}
+
+// 全局变量名表（简化实现）
+static uint8_t add_name(const char* name, int length) {
+    for (int i = 0; i < name_table_count; i++) {
+        if (strlen(name_table_names[i]) == (size_t)length &&
+            memcmp(name_table_names[i], name, length) == 0) {
+            return (uint8_t)i;
+        }
+    }
+    
+    if (name_table_count >= 256) return 0;
+    
+    name_table_names[name_table_count] = malloc(length + 1);
+    memcpy(name_table_names[name_table_count], name, length);
+    name_table_names[name_table_count][length] = '\0';
+    return (uint8_t)name_table_count++;
+}
+
+static void identifier(ms_parser_t* parser) {
+    ms_token_t name = parser->previous;
+    uint8_t name_index = add_name(name.start, name.length);
+    
+    // 检查是否是赋值
+    if (match(parser, TOKEN_EQUAL)) {
+        // 赋值
+        expression(parser);
+        
+        int arg = resolve_local(parser, &name);
+        if (arg != -1) {
+            emit_bytes(parser, OP_SET_LOCAL, (uint8_t)arg);
+        } else {
+            // Python风格：首次赋值即定义
+            emit_bytes(parser, OP_DEFINE_GLOBAL, name_index);
+        }
+    } else {
+        // 读取
+        int arg = resolve_local(parser, &name);
+        if (arg != -1) {
+            emit_bytes(parser, OP_GET_LOCAL, (uint8_t)arg);
+        } else {
+            emit_bytes(parser, OP_GET_GLOBAL, name_index);
+        }
+    }
+}
+
 static void number(ms_parser_t* parser) {
     double value = strtod(parser->previous.start, NULL);
-    emit_constant(parser, ms_value_float(value));
+    // 检查是否为整数
+    if (value == (int64_t)value) {
+        emit_constant(parser, ms_value_int((int64_t)value));
+    } else {
+        emit_constant(parser, ms_value_float(value));
+    }
 }
 
 static void string(ms_parser_t* parser) {
@@ -158,13 +340,34 @@ static void unary(ms_parser_t* parser) {
     // 发出操作符指令
     switch (operator_type) {
         case TOKEN_BANG: emit_byte(parser, OP_NOT); break;
+        case TOKEN_NOT: emit_byte(parser, OP_NOT); break;
         case TOKEN_MINUS: emit_byte(parser, OP_NEGATE); break;
         default: return; // Unreachable.
     }
 }
 
+static void and_(ms_parser_t* parser) {
+    int end_jump = emit_jump(parser, OP_JUMP_IF_FALSE);
+    
+    emit_byte(parser, OP_POP);
+    parse_precedence(parser, PREC_AND);
+    
+    patch_jump(parser, end_jump);
+}
+
+static void or_(ms_parser_t* parser) {
+    int else_jump = emit_jump(parser, OP_JUMP_IF_FALSE);
+    int end_jump = emit_jump(parser, OP_JUMP);
+    
+    patch_jump(parser, else_jump);
+    emit_byte(parser, OP_POP);
+    
+    parse_precedence(parser, PREC_OR);
+    patch_jump(parser, end_jump);
+}
+
 ms_parse_rule_t rules[] = {
-    [TOKEN_LEFT_PAREN]    = {grouping, NULL,   PREC_NONE},
+    [TOKEN_LEFT_PAREN]    = {grouping, call,   PREC_CALL},
     [TOKEN_RIGHT_PAREN]   = {NULL,     NULL,   PREC_NONE},
     [TOKEN_LEFT_BRACE]    = {NULL,     NULL,   PREC_NONE}, 
     [TOKEN_RIGHT_BRACE]   = {NULL,     NULL,   PREC_NONE},
@@ -183,10 +386,10 @@ ms_parse_rule_t rules[] = {
     [TOKEN_GREATER_EQUAL] = {NULL,     binary, PREC_COMPARISON},
     [TOKEN_LESS]          = {NULL,     binary, PREC_COMPARISON},
     [TOKEN_LESS_EQUAL]    = {NULL,     binary, PREC_COMPARISON},
-    [TOKEN_IDENTIFIER]    = {NULL,     NULL,   PREC_NONE},
+    [TOKEN_IDENTIFIER]    = {identifier, NULL, PREC_NONE},
     [TOKEN_STRING]        = {string,   NULL,   PREC_NONE},
     [TOKEN_NUMBER]        = {number,   NULL,   PREC_NONE},
-    [TOKEN_AND]           = {NULL,     NULL,   PREC_NONE},
+    [TOKEN_AND]           = {NULL,     and_,   PREC_AND},
     [TOKEN_CLASS]         = {NULL,     NULL,   PREC_NONE},
     [TOKEN_ELSE]          = {NULL,     NULL,   PREC_NONE},
     [TOKEN_FALSE]         = {literal,  NULL,   PREC_NONE},
@@ -194,12 +397,17 @@ ms_parse_rule_t rules[] = {
     [TOKEN_FUNC]          = {NULL,     NULL,   PREC_NONE},
     [TOKEN_IF]            = {NULL,     NULL,   PREC_NONE},
     [TOKEN_NIL]           = {literal,  NULL,   PREC_NONE},
-    [TOKEN_OR]            = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_PRINT]         = {NULL,     NULL,   PREC_NONE},
+    [TOKEN_NONE]          = {literal,  NULL,   PREC_NONE},
+    [TOKEN_OR]            = {NULL,     or_,    PREC_OR},
     [TOKEN_RETURN]        = {NULL,     NULL,   PREC_NONE},
     [TOKEN_TRUE]          = {literal,  NULL,   PREC_NONE},
     [TOKEN_VAR]           = {NULL,     NULL,   PREC_NONE},
     [TOKEN_WHILE]         = {NULL,     NULL,   PREC_NONE},
+    [TOKEN_DEF]           = {NULL,     NULL,   PREC_NONE},
+    [TOKEN_PASS]          = {NULL,     NULL,   PREC_NONE},
+    [TOKEN_IN]            = {NULL,     NULL,   PREC_NONE},
+    [TOKEN_NOT]           = {unary,    NULL,   PREC_NONE},
+    [TOKEN_IS]            = {NULL,     NULL,   PREC_NONE},
     [TOKEN_ERROR]         = {NULL,     NULL,   PREC_NONE},
     [TOKEN_EOF]           = {NULL,     NULL,   PREC_NONE},
 };
@@ -229,28 +437,339 @@ static void expression(ms_parser_t* parser) {
     parse_precedence(parser, PREC_ASSIGNMENT);
 }
 
-static void print_statement(ms_parser_t* parser) {
-    expression(parser);
-    consume(parser, TOKEN_NEWLINE, "Expect newline after value.");
-    emit_byte(parser, OP_PRINT);
-}
-
 static void expression_statement(ms_parser_t* parser) {
     expression(parser);
-    consume(parser, TOKEN_NEWLINE, "Expect newline after expression.");
+    
+    // 消费语句后的换行符（如果有）
+    if (match(parser, TOKEN_NEWLINE)) {
+        // 换行符已消费
+    } else if (!check(parser, TOKEN_EOF) && !check(parser, TOKEN_DEDENT)) {
+        error(parser, "Expect newline after expression.");
+    }
+    
     emit_byte(parser, OP_POP);
 }
 
+static void var_declaration(ms_parser_t* parser) {
+    uint8_t global = parse_variable(parser, "Expect variable name.");
+    
+    if (match(parser, TOKEN_EQUAL)) {
+        expression(parser);
+    } else {
+        emit_byte(parser, OP_NIL);
+    }
+    
+    // 消费语句后的换行符（如果有）
+    if (match(parser, TOKEN_NEWLINE)) {
+        // 换行符已消费
+    } else if (!check(parser, TOKEN_EOF) && !check(parser, TOKEN_DEDENT)) {
+        error(parser, "Expect newline after variable declaration.");
+    }
+    
+    define_variable(parser, global);
+}
+
+static void if_statement(ms_parser_t* parser) {
+    // if condition:
+    expression(parser);
+    consume(parser, TOKEN_COLON, "Expect ':' after if condition.");
+    consume(parser, TOKEN_NEWLINE, "Expect newline after ':'.");
+    
+    int then_jump = emit_jump(parser, OP_JUMP_IF_FALSE);
+    emit_byte(parser, OP_POP);
+    
+    begin_scope();
+    consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
+    
+    while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
+        declaration(parser);
+    }
+    
+    if (!check(parser, TOKEN_EOF)) {
+        consume(parser, TOKEN_DEDENT, "Expect dedent after block.");
+    }
+    end_scope(parser);
+    
+    // 执行if块后，跳到最后
+    int exit_jumps[256];
+    int exit_jump_count = 0;
+    exit_jumps[exit_jump_count++] = emit_jump(parser, OP_JUMP);
+    
+    // patch if条件为假时的跳转
+    patch_jump(parser, then_jump);
+    emit_byte(parser, OP_POP);
+    
+    // 处理 elif
+    while (match(parser, TOKEN_ELIF)) {
+        expression(parser);
+        consume(parser, TOKEN_COLON, "Expect ':' after elif condition.");
+        consume(parser, TOKEN_NEWLINE, "Expect newline after ':'.");
+        
+        int elif_jump = emit_jump(parser, OP_JUMP_IF_FALSE);
+        emit_byte(parser, OP_POP);
+        
+        begin_scope();
+        consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
+        
+        while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
+            declaration(parser);
+        }
+        
+        if (!check(parser, TOKEN_EOF)) {
+            consume(parser, TOKEN_DEDENT, "Expect dedent after block.");
+        }
+        end_scope(parser);
+        
+        // elif块执行后，跳到最后
+        exit_jumps[exit_jump_count++] = emit_jump(parser, OP_JUMP);
+        
+        // patch elif条件为假时的跳转到下一个elif或else
+        patch_jump(parser, elif_jump);
+        emit_byte(parser, OP_POP);
+    }
+    
+    if (match(parser, TOKEN_ELSE)) {
+        consume(parser, TOKEN_COLON, "Expect ':' after else.");
+        consume(parser, TOKEN_NEWLINE, "Expect newline after ':'.");
+        
+        begin_scope();
+        consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
+        
+        while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
+            declaration(parser);
+        }
+        
+        if (!check(parser, TOKEN_EOF)) {
+            consume(parser, TOKEN_DEDENT, "Expect dedent after block.");
+        }
+        end_scope(parser);
+    }
+    
+    // patch所有的exit jumps到这里
+    for (int i = 0; i < exit_jump_count; i++) {
+        patch_jump(parser, exit_jumps[i]);
+    }
+}
+
+static void while_statement(ms_parser_t* parser) {
+    int loop_start = current_chunk(parser)->count;
+    
+    expression(parser);
+    consume(parser, TOKEN_COLON, "Expect ':' after while condition.");
+    consume(parser, TOKEN_NEWLINE, "Expect newline after ':'.");
+    
+    int exit_jump = emit_jump(parser, OP_JUMP_IF_FALSE);
+    emit_byte(parser, OP_POP);
+    
+    begin_scope();
+    consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
+    
+    while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
+        declaration(parser);
+    }
+    
+    if (!check(parser, TOKEN_EOF)) {
+        consume(parser, TOKEN_DEDENT, "Expect dedent after block.");
+    }
+    end_scope(parser);
+    
+    emit_loop(parser, loop_start);
+    
+    patch_jump(parser, exit_jump);
+    emit_byte(parser, OP_POP);
+}
+
+static void for_statement(ms_parser_t* parser) {
+    begin_scope();
+    
+    // for var in iterable:
+    consume(parser, TOKEN_IDENTIFIER, "Expect variable name.");
+    ms_token_t var_name = parser->previous;
+    
+    consume(parser, TOKEN_IN, "Expect 'in' after variable.");
+    
+    // 简化实现：只支持 range()
+    expression(parser);
+    
+    consume(parser, TOKEN_COLON, "Expect ':' after for clause.");
+    consume(parser, TOKEN_NEWLINE, "Expect newline after ':'.");
+    
+    // TODO: 完整的for循环实现
+    error(parser, "For loops not fully implemented yet.");
+    
+    end_scope(parser);
+}
+
+static int emit_jump(ms_parser_t* parser, uint8_t instruction) {
+    emit_byte(parser, instruction);
+    emit_byte(parser, 0xff);
+    emit_byte(parser, 0xff);
+    return current_chunk(parser)->count - 2;
+}
+
+static void patch_jump(ms_parser_t* parser, int offset) {
+    int jump = current_chunk(parser)->count - offset - 2;
+    
+    if (jump > UINT16_MAX) {
+        error(parser, "Too much code to jump over.");
+    }
+    
+    current_chunk(parser)->code[offset] = (jump >> 8) & 0xff;
+    current_chunk(parser)->code[offset + 1] = jump & 0xff;
+}
+
+static void emit_loop(ms_parser_t* parser, int loop_start) {
+    emit_byte(parser, OP_LOOP);
+    
+    int offset = current_chunk(parser)->count - loop_start + 2;
+    if (offset > UINT16_MAX) error(parser, "Loop body too large.");
+    
+    emit_byte(parser, (offset >> 8) & 0xff);
+    emit_byte(parser, offset & 0xff);
+}
+
 static void statement(ms_parser_t* parser) {
-    if (match(parser, TOKEN_PRINT)) {
-        print_statement(parser);
+    if (match(parser, TOKEN_IF)) {
+        if_statement(parser);
+    } else if (match(parser, TOKEN_WHILE)) {
+        while_statement(parser);
+    } else if (match(parser, TOKEN_FOR)) {
+        for_statement(parser);
+    } else if (match(parser, TOKEN_PASS)) {
+        // 消费语句后的换行符（如果有）
+        if (match(parser, TOKEN_NEWLINE)) {
+            // 换行符已消费
+        } else if (!check(parser, TOKEN_EOF) && !check(parser, TOKEN_DEDENT)) {
+            error(parser, "Expect newline after 'pass'.");
+        }
+    } else if (match(parser, TOKEN_RETURN)) {
+        // return 语句
+        if (check(parser, TOKEN_NEWLINE) || check(parser, TOKEN_EOF) || check(parser, TOKEN_DEDENT)) {
+            // return 无值
+            emit_byte(parser, OP_NIL);
+        } else {
+            // return 有值
+            expression(parser);
+        }
+        emit_byte(parser, OP_RETURN);
+        
+        // 消费语句后的换行符（如果有）
+        if (match(parser, TOKEN_NEWLINE)) {
+            // 换行符已消费
+        } else if (!check(parser, TOKEN_EOF) && !check(parser, TOKEN_DEDENT)) {
+            error(parser, "Expect newline after return.");
+        }
     } else {
         expression_statement(parser);
     }
 }
 
+static void function_declaration(ms_parser_t* parser) {
+    // def name(params):
+    uint8_t name_index = parse_variable(parser, "Expect function name.");
+    
+    consume(parser, TOKEN_LEFT_PAREN, "Expect '(' after function name.");
+    
+    // 解析参数
+    int param_count = 0;
+    ms_token_t params[255];
+    if (!check(parser, TOKEN_RIGHT_PAREN)) {
+        do {
+            if (param_count >= 255) {
+                error(parser, "Can't have more than 255 parameters.");
+            }
+            
+            consume(parser, TOKEN_IDENTIFIER, "Expect parameter name.");
+            params[param_count] = parser->previous;
+            param_count++;
+        } while (match(parser, TOKEN_COMMA));
+    }
+    
+    consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after parameters.");
+    consume(parser, TOKEN_COLON, "Expect ':' after function signature.");
+    consume(parser, TOKEN_NEWLINE, "Expect newline after ':'.");
+    
+    // 创建函数的chunk
+    ms_chunk_t* function_chunk = create_function_chunk(parser);
+    if (function_chunk == NULL) {
+        error(parser, "Too many functions.");
+        return;
+    }
+    
+    // 保存当前chunk并切换到函数chunk
+    ms_chunk_t* prev_chunk = parser->compiling_chunk;
+    parser->compiling_chunk = function_chunk;
+    
+    // 保存当前的局部变量状态
+    ms_local_t saved_locals[256];
+    int saved_local_count = local_count;
+    int saved_scope_depth = scope_depth;
+    memcpy(saved_locals, locals, sizeof(locals));
+    local_count = 0;
+    scope_depth = 0;
+    
+    // 编译函数体
+    begin_scope();
+    
+    // 添加参数作为局部变量
+    for (int i = 0; i < param_count; i++) {
+        add_local(parser, params[i]);
+        mark_initialized();
+    }
+    
+    consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
+    
+    while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
+        declaration(parser);
+    }
+    
+    if (!check(parser, TOKEN_EOF)) {
+        consume(parser, TOKEN_DEDENT, "Expect dedent after block.");
+    }
+    
+    // 如果函数体没有return，添加return nil
+    emit_byte(parser, OP_NIL);
+    emit_byte(parser, OP_RETURN);
+    
+    end_scope(parser);
+    
+    // 恢复之前的chunk和局部变量状态
+    parser->compiling_chunk = prev_chunk;
+    local_count = saved_local_count;
+    scope_depth = saved_scope_depth;
+    memcpy(locals, saved_locals, sizeof(locals));
+    
+    // 创建函数对象并存储为常量
+    ms_function_t* function = malloc(sizeof(ms_function_t));
+    function->chunk = function_chunk;
+    function->arity = param_count;
+    function->name = malloc(name_table_names[name_index] ? strlen(name_table_names[name_index]) + 1 : 1);
+    if (name_table_names[name_index]) {
+        strcpy(function->name, name_table_names[name_index]);
+    } else {
+        function->name[0] = '\0';
+    }
+    
+    ms_value_t func_value;
+    func_value.type = MS_VAL_FUNCTION;
+    func_value.as.function = function;
+    
+    // 发出OP_FUNCTION指令
+    uint8_t func_const = make_constant(parser, func_value);
+    emit_bytes(parser, OP_CONSTANT, func_const);
+    
+    // 定义函数变量
+    define_variable(parser, name_index);
+}
+
 static void declaration(ms_parser_t* parser) {
-    statement(parser);
+    if (match(parser, TOKEN_VAR)) {
+        var_declaration(parser);
+    } else if (match(parser, TOKEN_DEF)) {
+        function_declaration(parser);
+    } else {
+        statement(parser);
+    }
     
     if (parser->panic_mode) {
         // 同步到下一个语句
@@ -259,12 +778,11 @@ static void declaration(ms_parser_t* parser) {
             
             switch (parser->current.type) {
                 case TOKEN_CLASS:
-                case TOKEN_FUNC:
+                case TOKEN_DEF:
                 case TOKEN_VAR:
                 case TOKEN_FOR:
                 case TOKEN_IF:
                 case TOKEN_WHILE:
-                case TOKEN_PRINT:
                 case TOKEN_RETURN:
                     return;
                 default:
@@ -280,6 +798,7 @@ void ms_parser_init(ms_parser_t* parser, ms_lexer_t* lexer) {
     parser->had_error = false;
     parser->panic_mode = false;
     parser->lexer = lexer;
+    parser->function_chunk_count = 0;
 }
 
 bool ms_compile(const char* source, ms_chunk_t* chunk) {
@@ -292,8 +811,17 @@ bool ms_compile(const char* source, ms_chunk_t* chunk) {
     
     advance(&parser);
     
+    // 跳过开头的换行符
+    while (match(&parser, TOKEN_NEWLINE)) {
+        // Skip
+    }
+    
     while (!match(&parser, TOKEN_EOF)) {
         declaration(&parser);
+        // 跳过多余的换行符
+        while (match(&parser, TOKEN_NEWLINE)) {
+            // Skip
+        }
     }
     
     end_compiler(&parser);
