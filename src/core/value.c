@@ -298,3 +298,110 @@ ms_value_t ms_tuple_get(ms_tuple_t* tuple, int index) {
 int ms_tuple_len(ms_tuple_t* tuple) {
     return tuple->count;
 }
+
+// Slice operations
+ms_value_t ms_slice_list(ms_list_t* list, int start, int stop, int step) {
+    int len = ms_list_len(list);
+    
+    // Normalize negative indices
+    if (start < 0) start = len + start;
+    if (stop < 0) stop = len + stop;
+    
+    // Clamp to valid range
+    if (start < 0) start = 0;
+    if (start > len) start = len;
+    if (stop < 0) stop = 0;
+    if (stop > len) stop = len;
+    
+    ms_list_t* result = ms_list_new();
+    
+    if (step > 0) {
+        for (int i = start; i < stop; i += step) {
+            ms_list_append(result, ms_list_get(list, i));
+        }
+    } else if (step < 0) {
+        // Negative step: reverse iteration
+        for (int i = start; i > stop; i += step) {
+            ms_list_append(result, ms_list_get(list, i));
+        }
+    }
+    
+    return ms_value_list(result);
+}
+
+ms_value_t ms_slice_tuple(ms_tuple_t* tuple, int start, int stop, int step) {
+    int len = ms_tuple_len(tuple);
+    
+    // Normalize negative indices
+    if (start < 0) start = len + start;
+    if (stop < 0) stop = len + stop;
+    
+    // Clamp to valid range
+    if (start < 0) start = 0;
+    if (start > len) start = len;
+    if (stop < 0) stop = 0;
+    if (stop > len) stop = len;
+    
+    // Count elements
+    int count = 0;
+    if (step > 0) {
+        for (int i = start; i < stop; i += step) count++;
+    } else if (step < 0) {
+        for (int i = start; i > stop; i += step) count++;
+    }
+    
+    ms_tuple_t* result = ms_tuple_new(count);
+    int idx = 0;
+    
+    if (step > 0) {
+        for (int i = start; i < stop; i += step) {
+            result->elements[idx++] = ms_tuple_get(tuple, i);
+        }
+    } else if (step < 0) {
+        for (int i = start; i > stop; i += step) {
+            result->elements[idx++] = ms_tuple_get(tuple, i);
+        }
+    }
+    
+    return ms_value_tuple(result);
+}
+
+ms_value_t ms_slice_string(const char* str, int start, int stop, int step) {
+    int len = strlen(str);
+    
+    // Normalize negative indices
+    if (start < 0) start = len + start;
+    if (stop < 0) stop = len + stop;
+    
+    // Clamp to valid range
+    if (start < 0) start = 0;
+    if (start > len) start = len;
+    if (stop < 0) stop = 0;
+    if (stop > len) stop = len;
+    
+    // Calculate result length
+    int result_len = 0;
+    if (step > 0) {
+        for (int i = start; i < stop; i += step) result_len++;
+    } else if (step < 0) {
+        for (int i = start; i > stop; i += step) result_len++;
+    }
+    
+    char* result = malloc(result_len + 1);
+    int idx = 0;
+    
+    if (step > 0) {
+        for (int i = start; i < stop; i += step) {
+            result[idx++] = str[i];
+        }
+    } else if (step < 0) {
+        for (int i = start; i > stop; i += step) {
+            result[idx++] = str[i];
+        }
+    }
+    
+    result[result_len] = '\0';
+    ms_value_t val = ms_value_string(result);
+    free(result);
+    return val;
+}

@@ -557,6 +557,81 @@ static ms_result_t run(ms_vm_t* vm) {
                 }
                 break;
             }
+            case OP_SLICE_GET: {
+                // Stack: obj, start, stop, step
+                ms_value_t step_val = ms_vm_pop(vm);
+                ms_value_t stop_val = ms_vm_pop(vm);
+                ms_value_t start_val = ms_vm_pop(vm);
+                ms_value_t obj = ms_vm_pop(vm);
+                
+                // Default values
+                int start = 0;
+                int stop = 0;
+                int step = 1;
+                
+                // Parse step
+                if (!ms_value_is_nil(step_val)) {
+                    if (!ms_value_is_int(step_val)) {
+                        runtime_error(vm, "Slice step must be an integer.");
+                        return MS_RESULT_RUNTIME_ERROR;
+                    }
+                    step = (int)ms_value_as_int(step_val);
+                    if (step == 0) {
+                        runtime_error(vm, "Slice step cannot be zero.");
+                        return MS_RESULT_RUNTIME_ERROR;
+                    }
+                }
+                
+                // Get object length
+                int len = 0;
+                if (ms_value_is_list(obj)) {
+                    len = ms_list_len(ms_value_as_list(obj));
+                } else if (ms_value_is_tuple(obj)) {
+                    len = ms_tuple_len(ms_value_as_tuple(obj));
+                } else if (ms_value_is_string(obj)) {
+                    len = strlen(ms_value_as_string(obj));
+                } else {
+                    runtime_error(vm, "Can only slice lists, tuples, and strings.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                // Parse start
+                if (ms_value_is_nil(start_val)) {
+                    start = (step > 0) ? 0 : len - 1;
+                } else {
+                    if (!ms_value_is_int(start_val)) {
+                        runtime_error(vm, "Slice start must be an integer.");
+                        return MS_RESULT_RUNTIME_ERROR;
+                    }
+                    start = (int)ms_value_as_int(start_val);
+                }
+                
+                // Parse stop
+                if (ms_value_is_nil(stop_val)) {
+                    stop = (step > 0) ? len : -len - 1;
+                } else {
+                    if (!ms_value_is_int(stop_val)) {
+                        runtime_error(vm, "Slice stop must be an integer.");
+                        return MS_RESULT_RUNTIME_ERROR;
+                    }
+                    stop = (int)ms_value_as_int(stop_val);
+                }
+                
+                // Perform slice
+                ms_value_t result;
+                if (ms_value_is_list(obj)) {
+                    result = ms_slice_list(ms_value_as_list(obj), start, stop, step);
+                } else if (ms_value_is_tuple(obj)) {
+                    result = ms_slice_tuple(ms_value_as_tuple(obj), start, stop, step);
+                } else if (ms_value_is_string(obj)) {
+                    result = ms_slice_string(ms_value_as_string(obj), start, stop, step);
+                } else {
+                    result = ms_value_nil();
+                }
+                
+                ms_vm_push(vm, result);
+                break;
+            }
             case OP_FOR_ITER: {
                 uint8_t var_slot = READ_BYTE();
                 

@@ -68,6 +68,7 @@ typedef enum {
     OP_BUILD_TUPLE,
     OP_INDEX_GET,
     OP_INDEX_SET,
+    OP_SLICE_GET,
     OP_FOR_ITER,
     OP_FOR_ITER_LOCAL,
     OP_FOR_END,

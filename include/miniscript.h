@@ -171,6 +171,11 @@ void ms_tuple_free(ms_tuple_t* tuple);
 ms_value_t ms_tuple_get(ms_tuple_t* tuple, int index);
 int ms_tuple_len(ms_tuple_t* tuple);
 
+// Slice operations
+ms_value_t ms_slice_list(ms_list_t* list, int start, int stop, int step);
+ms_value_t ms_slice_tuple(ms_tuple_t* tuple, int start, int stop, int step);
+ms_value_t ms_slice_string(const char* str, int start, int stop, int step);
+
 // 扩展API
 void ms_vm_register_function(ms_vm_t* vm, const char* name, ms_native_fn_t func);
 void ms_vm_set_global(ms_vm_t* vm, const char* name, ms_value_t value);

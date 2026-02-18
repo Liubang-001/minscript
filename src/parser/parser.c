@@ -354,11 +354,69 @@ static void call(ms_parser_t* parser) {
 }
 
 static void index_access(ms_parser_t* parser) {
-    // Handle index access: obj[index]
-    expression(parser);
-    consume(parser, TOKEN_RIGHT_BRACKET, "Expect ']' after index.");
+    // Handle index access: obj[index] or slice: obj[start:stop:step]
     
-    emit_byte(parser, OP_INDEX_GET);
+    // Check if this starts with a colon (e.g., [:5])
+    if (check(parser, TOKEN_COLON)) {
+        // Slice with no start: [:stop:step]
+        emit_byte(parser, OP_NIL);  // start = nil
+        consume(parser, TOKEN_COLON, "Expect ':'.");
+        
+        // Parse stop (optional)
+        if (!check(parser, TOKEN_COLON) && !check(parser, TOKEN_RIGHT_BRACKET)) {
+            expression(parser);
+        } else {
+            emit_byte(parser, OP_NIL);
+        }
+        
+        // Parse step (optional)
+        if (match(parser, TOKEN_COLON)) {
+            if (!check(parser, TOKEN_RIGHT_BRACKET)) {
+                expression(parser);
+            } else {
+                emit_byte(parser, OP_NIL);
+            }
+        } else {
+            emit_byte(parser, OP_NIL);
+        }
+        
+        consume(parser, TOKEN_RIGHT_BRACKET, "Expect ']' after slice.");
+        emit_byte(parser, OP_SLICE_GET);
+        return;
+    }
+    
+    // Parse first expression (could be index or start)
+    expression(parser);
+    
+    // Check if it's a slice (has colon after first expression)
+    if (match(parser, TOKEN_COLON)) {
+        // This is a slice: [start:stop:step]
+        
+        // Parse stop (optional)
+        if (!check(parser, TOKEN_COLON) && !check(parser, TOKEN_RIGHT_BRACKET)) {
+            expression(parser);
+        } else {
+            emit_byte(parser, OP_NIL);
+        }
+        
+        // Parse step (optional)
+        if (match(parser, TOKEN_COLON)) {
+            if (!check(parser, TOKEN_RIGHT_BRACKET)) {
+                expression(parser);
+            } else {
+                emit_byte(parser, OP_NIL);
+            }
+        } else {
+            emit_byte(parser, OP_NIL);
+        }
+        
+        consume(parser, TOKEN_RIGHT_BRACKET, "Expect ']' after slice.");
+        emit_byte(parser, OP_SLICE_GET);
+    } else {
+        // Regular index access
+        consume(parser, TOKEN_RIGHT_BRACKET, "Expect ']' after index.");
+        emit_byte(parser, OP_INDEX_GET);
+    }
 }
 
 static void attribute(ms_parser_t* parser) {
