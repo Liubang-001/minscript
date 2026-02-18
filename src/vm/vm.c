@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <math.h>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -289,6 +290,65 @@ static ms_result_t run(ms_vm_t* vm) {
             case OP_SUBTRACT: BINARY_OP(ms_value_int, -); break;
             case OP_MULTIPLY: BINARY_OP(ms_value_int, *); break;
             case OP_DIVIDE: BINARY_OP(ms_value_int, /); break;
+            case OP_FLOOR_DIVIDE: {
+                ms_value_t b = peek(vm, 0);
+                ms_value_t a = peek(vm, 1);
+                if (ms_value_is_int(a) && ms_value_is_int(b)) {
+                    int64_t divisor = ms_value_as_int(b);
+                    if (divisor == 0) {
+                        runtime_error(vm, "Division by zero.");
+                        return MS_RESULT_RUNTIME_ERROR;
+                    }
+                    ms_vm_pop(vm);
+                    ms_vm_pop(vm);
+                    ms_vm_push(vm, ms_value_int(ms_value_as_int(a) / divisor));
+                } else {
+                    double da = ms_value_as_float(a);
+                    double db = ms_value_as_float(b);
+                    if (db == 0.0) {
+                        runtime_error(vm, "Division by zero.");
+                        return MS_RESULT_RUNTIME_ERROR;
+                    }
+                    ms_vm_pop(vm);
+                    ms_vm_pop(vm);
+                    ms_vm_push(vm, ms_value_int((int64_t)(da / db)));
+                }
+                break;
+            }
+            case OP_POWER: {
+                ms_value_t b = peek(vm, 0);
+                ms_value_t a = peek(vm, 1);
+                double da = ms_value_as_float(a);
+                double db = ms_value_as_float(b);
+                ms_vm_pop(vm);
+                ms_vm_pop(vm);
+                double result = pow(da, db);
+                // 如果结果是整数，返回整数类型
+                if (result == (int64_t)result && result >= INT64_MIN && result <= INT64_MAX) {
+                    ms_vm_push(vm, ms_value_int((int64_t)result));
+                } else {
+                    ms_vm_push(vm, ms_value_float(result));
+                }
+                break;
+            }
+            case OP_MODULO: {
+                ms_value_t b = peek(vm, 0);
+                ms_value_t a = peek(vm, 1);
+                if (ms_value_is_int(a) && ms_value_is_int(b)) {
+                    int64_t divisor = ms_value_as_int(b);
+                    if (divisor == 0) {
+                        runtime_error(vm, "Modulo by zero.");
+                        return MS_RESULT_RUNTIME_ERROR;
+                    }
+                    ms_vm_pop(vm);
+                    ms_vm_pop(vm);
+                    ms_vm_push(vm, ms_value_int(ms_value_as_int(a) % divisor));
+                } else {
+                    runtime_error(vm, "Modulo operands must be integers.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                break;
+            }
             case OP_NOT:
                 ms_vm_push(vm, ms_value_bool(is_falsey(ms_vm_pop(vm))));
                 break;

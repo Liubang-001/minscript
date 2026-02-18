@@ -350,8 +350,10 @@ ms_token_t ms_lexer_scan_token(ms_lexer_t* lexer) {
         case '-': return make_token(lexer, TOKEN_MINUS);
         case '+': return make_token(lexer, TOKEN_PLUS);
         case ';': return make_token(lexer, TOKEN_SEMICOLON);
-        case '/': return make_token(lexer, TOKEN_SLASH);
-        case '*': return make_token(lexer, TOKEN_STAR);
+        case '/':
+            return make_token(lexer, match(lexer, '/') ? TOKEN_SLASH_SLASH : TOKEN_SLASH);
+        case '*':
+            return make_token(lexer, match(lexer, '*') ? TOKEN_STAR_STAR : TOKEN_STAR);
         case '%': return make_token(lexer, TOKEN_PERCENT);
         case ':': return make_token(lexer, TOKEN_COLON);
         case '!':

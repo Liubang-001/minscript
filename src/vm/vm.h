@@ -46,6 +46,8 @@ typedef enum {
     OP_SUBTRACT,
     OP_MULTIPLY,
     OP_DIVIDE,
+    OP_FLOOR_DIVIDE,  // 整除 //
+    OP_POWER,         // 幂运算 **
     OP_MODULO,
     OP_NOT,
     OP_NEGATE,
