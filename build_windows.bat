@@ -48,6 +48,8 @@ REM 编译所有源文件
 %CC% %CFLAGS% -I%INCLUDE_DIR% -c %SRC_DIR%\jit\jit.c -o %BUILD_DIR%\jit\jit.o
 %CC% %CFLAGS% -I%INCLUDE_DIR% -c %SRC_DIR%\ext\ext.c -o %BUILD_DIR%\ext\ext.o
 %CC% %CFLAGS% -I%INCLUDE_DIR% -c %SRC_DIR%\ext\http.c -o %BUILD_DIR%\ext\http.o
+%CC% %CFLAGS% -I%INCLUDE_DIR% -c %SRC_DIR%\ext\math_ext.c -o %BUILD_DIR%\ext\math_ext.o
+%CC% %CFLAGS% -I%INCLUDE_DIR% -c %SRC_DIR%\ext\string_ext.c -o %BUILD_DIR%\ext\string_ext.o
 
 if errorlevel 1 (
     echo 编译失败！
