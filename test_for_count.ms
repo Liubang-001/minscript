@@ -1,0 +1,4 @@
+count = 0
+for i in [1, 2, 3]:
+    count = count + 1
+print(count)

@@ -18,6 +18,7 @@ static int emit_jump(ms_parser_t* parser, uint8_t instruction);
 static void patch_jump(ms_parser_t* parser, int offset);
 static void emit_loop(ms_parser_t* parser, int loop_start);
 static void with_statement(ms_parser_t* parser);
+static void string(ms_parser_t* parser);
 static void import_statement(ms_parser_t* parser);
 
 static ms_chunk_t* current_chunk(ms_parser_t* parser) {
@@ -249,9 +250,91 @@ static void literal(ms_parser_t* parser) {
     }
 }
 
+// Parse list: [1, 2, 3]
+static void list_literal(ms_parser_t* parser) {
+    int element_count = 0;
+    
+    if (!check(parser, TOKEN_RIGHT_BRACKET)) {
+        do {
+            expression(parser);
+            element_count++;
+        } while (match(parser, TOKEN_COMMA));
+    }
+    
+    consume(parser, TOKEN_RIGHT_BRACKET, "Expect ']' after list elements.");
+    emit_bytes(parser, OP_BUILD_LIST, element_count);
+}
+
+// Parse dict: {"key": value, ...}
+static void dict_literal(ms_parser_t* parser) {
+    int pair_count = 0;
+    
+    if (!check(parser, TOKEN_RIGHT_BRACE)) {
+        do {
+            // Parse key (must be string)
+            if (parser->current.type == TOKEN_STRING) {
+                advance(parser);
+                string(parser);
+            } else {
+                error(parser, "Dictionary keys must be strings.");
+                return;
+            }
+            
+            consume(parser, TOKEN_COLON, "Expect ':' after dictionary key.");
+            
+            // Parse value
+            expression(parser);
+            pair_count++;
+        } while (match(parser, TOKEN_COMMA));
+    }
+    
+    consume(parser, TOKEN_RIGHT_BRACE, "Expect '}' after dictionary elements.");
+    emit_bytes(parser, OP_BUILD_DICT, pair_count);
+}
+
+// Parse tuple: (1, 2, 3)
+static void tuple_literal(ms_parser_t* parser) {
+    int element_count = 0;
+    
+    if (!check(parser, TOKEN_RIGHT_PAREN)) {
+        do {
+            expression(parser);
+            element_count++;
+        } while (match(parser, TOKEN_COMMA));
+    }
+    
+    consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after tuple elements.");
+    emit_bytes(parser, OP_BUILD_TUPLE, element_count);
+}
+
 static void grouping(ms_parser_t* parser) {
+    // Check for empty tuple ()
+    if (check(parser, TOKEN_RIGHT_PAREN)) {
+        consume(parser, TOKEN_RIGHT_PAREN, "Expect ')'.");
+        emit_bytes(parser, OP_BUILD_TUPLE, 0);
+        return;
+    }
+    
     expression(parser);
-    consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
+    
+    // Check if this is a tuple (has comma)
+    if (match(parser, TOKEN_COMMA)) {
+        int element_count = 1;
+        
+        // Parse remaining elements
+        if (!check(parser, TOKEN_RIGHT_PAREN)) {
+            do {
+                expression(parser);
+                element_count++;
+            } while (match(parser, TOKEN_COMMA));
+        }
+        
+        consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after tuple elements.");
+        emit_bytes(parser, OP_BUILD_TUPLE, element_count);
+    } else {
+        // Just a grouped expression
+        consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
+    }
 }
 
 static void call(ms_parser_t* parser) {
@@ -268,6 +351,14 @@ static void call(ms_parser_t* parser) {
     consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
     
     emit_bytes(parser, OP_CALL, arg_count);
+}
+
+static void index_access(ms_parser_t* parser) {
+    // Handle index access: obj[index]
+    expression(parser);
+    consume(parser, TOKEN_RIGHT_BRACKET, "Expect ']' after index.");
+    
+    emit_byte(parser, OP_INDEX_GET);
 }
 
 static void attribute(ms_parser_t* parser) {
@@ -499,8 +590,10 @@ static void or_(ms_parser_t* parser) {
 ms_parse_rule_t rules[] = {
     [TOKEN_LEFT_PAREN]    = {grouping, call,      PREC_CALL},
     [TOKEN_RIGHT_PAREN]   = {NULL,     NULL,      PREC_NONE},
-    [TOKEN_LEFT_BRACE]    = {NULL,     NULL,      PREC_NONE}, 
+    [TOKEN_LEFT_BRACE]    = {dict_literal, NULL,  PREC_NONE}, 
     [TOKEN_RIGHT_BRACE]   = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_LEFT_BRACKET]  = {list_literal, index_access, PREC_CALL},
+    [TOKEN_RIGHT_BRACKET] = {NULL,     NULL,      PREC_NONE},
     [TOKEN_COMMA]         = {NULL,     NULL,      PREC_NONE},
     [TOKEN_DOT]           = {NULL,     attribute, PREC_CALL},
     [TOKEN_MINUS]         = {unary,    binary,    PREC_TERM},
@@ -719,14 +812,58 @@ static void for_statement(ms_parser_t* parser) {
     
     consume(parser, TOKEN_IN, "Expect 'in' after variable.");
     
-    // 简化实现：只支持 range()
+    // Add loop variable as local (slot 0) - initialize with nil
+    emit_byte(parser, OP_NIL);
+    add_local(parser, var_name);
+    mark_initialized();
+    uint8_t var_slot = local_count - 1;
+    
+    // Parse the iterable expression (leaves value on stack)
     expression(parser);
+    
+    // Store iterable in a local variable (slot 1) - value is already on stack
+    add_local(parser, (ms_token_t){.start = "__iter__", .length = 8});
+    mark_initialized();
+    uint8_t iter_slot = local_count - 1;
+    
+    // Initialize index to 0 and store in a local variable (slot 2) - value is already on stack
+    emit_constant(parser, ms_value_int(0));
+    add_local(parser, (ms_token_t){.start = "__index__", .length = 9});
+    mark_initialized();
+    uint8_t index_slot = local_count - 1;
     
     consume(parser, TOKEN_COLON, "Expect ':' after for clause.");
     consume(parser, TOKEN_NEWLINE, "Expect newline after ':'.");
+    consume(parser, TOKEN_INDENT, "Expect indent after for:");
     
-    // TODO: 完整的for循环实现
-    error(parser, "For loops not fully implemented yet.");
+    // Loop start
+    int loop_start = current_chunk(parser)->count;
+    
+    // Emit FOR_ITER_LOCAL instruction
+    // This will check if there are more elements and set the loop variable
+    emit_bytes(parser, OP_FOR_ITER_LOCAL, var_slot);
+    emit_byte(parser, iter_slot);
+    emit_byte(parser, index_slot);
+    
+    // Jump if no more elements
+    int exit_jump = emit_jump(parser, OP_JUMP_IF_FALSE);
+    emit_byte(parser, OP_POP);  // Pop the boolean result
+    
+    // Parse loop body
+    while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
+        declaration(parser);
+    }
+    
+    if (!check(parser, TOKEN_EOF)) {
+        consume(parser, TOKEN_DEDENT, "Expect dedent after for block.");
+    }
+    
+    // Loop back
+    emit_loop(parser, loop_start);
+    
+    // Patch exit jump
+    patch_jump(parser, exit_jump);
+    emit_byte(parser, OP_POP);  // Pop the boolean result
     
     end_scope(parser);
 }

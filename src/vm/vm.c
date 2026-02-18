@@ -159,6 +159,7 @@ static ms_result_t run(ms_vm_t* vm) {
             case OP_SET_LOCAL: {
                 uint8_t slot = READ_BYTE();
                 frame->slots[slot] = peek(vm, 0);
+                ms_vm_pop(vm);
                 break;
             }
             case OP_GET_GLOBAL: {
@@ -460,6 +461,225 @@ static ms_result_t run(ms_vm_t* vm) {
                 module_val.as.module = (void*)module_name;  // Store module name as pointer
                 
                 ms_vm_push(vm, module_val);
+                break;
+            }
+            case OP_BUILD_LIST: {
+                uint8_t count = READ_BYTE();
+                ms_list_t* list = ms_list_new();
+                for (int i = 0; i < count; i++) {
+                    ms_list_append(list, vm->stack_top[-count + i]);
+                }
+                vm->stack_top -= count;
+                ms_vm_push(vm, ms_value_list(list));
+                break;
+            }
+            case OP_BUILD_DICT: {
+                uint8_t pair_count = READ_BYTE();
+                ms_dict_t* dict = ms_dict_new();
+                for (int i = 0; i < pair_count; i++) {
+                    ms_value_t value = ms_vm_pop(vm);
+                    ms_value_t key_val = ms_vm_pop(vm);
+                    if (!ms_value_is_string(key_val)) {
+                        runtime_error(vm, "Dictionary keys must be strings.");
+                        return MS_RESULT_RUNTIME_ERROR;
+                    }
+                    ms_dict_set(dict, ms_value_as_string(key_val), value);
+                }
+                ms_vm_push(vm, ms_value_dict(dict));
+                break;
+            }
+            case OP_BUILD_TUPLE: {
+                uint8_t count = READ_BYTE();
+                ms_tuple_t* tuple = ms_tuple_new(count);
+                for (int i = 0; i < count; i++) {
+                    tuple->elements[i] = vm->stack_top[-count + i];
+                }
+                vm->stack_top -= count;
+                ms_vm_push(vm, ms_value_tuple(tuple));
+                break;
+            }
+            case OP_INDEX_GET: {
+                ms_value_t index_val = ms_vm_pop(vm);
+                ms_value_t obj = ms_vm_pop(vm);
+                
+                if (ms_value_is_list(obj)) {
+                    if (!ms_value_is_int(index_val)) {
+                        runtime_error(vm, "List indices must be integers.");
+                        return MS_RESULT_RUNTIME_ERROR;
+                    }
+                    int index = (int)ms_value_as_int(index_val);
+                    ms_list_t* list = ms_value_as_list(obj);
+                    ms_vm_push(vm, ms_list_get(list, index));
+                } else if (ms_value_is_dict(obj)) {
+                    if (!ms_value_is_string(index_val)) {
+                        runtime_error(vm, "Dictionary keys must be strings.");
+                        return MS_RESULT_RUNTIME_ERROR;
+                    }
+                    ms_dict_t* dict = ms_value_as_dict(obj);
+                    ms_vm_push(vm, ms_dict_get(dict, ms_value_as_string(index_val)));
+                } else if (ms_value_is_tuple(obj)) {
+                    if (!ms_value_is_int(index_val)) {
+                        runtime_error(vm, "Tuple indices must be integers.");
+                        return MS_RESULT_RUNTIME_ERROR;
+                    }
+                    int index = (int)ms_value_as_int(index_val);
+                    ms_tuple_t* tuple = ms_value_as_tuple(obj);
+                    ms_vm_push(vm, ms_tuple_get(tuple, index));
+                } else {
+                    runtime_error(vm, "Can only index lists, dicts, and tuples.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                break;
+            }
+            case OP_INDEX_SET: {
+                ms_value_t value = ms_vm_pop(vm);
+                ms_value_t index_val = ms_vm_pop(vm);
+                ms_value_t obj = ms_vm_pop(vm);
+                
+                if (ms_value_is_list(obj)) {
+                    if (!ms_value_is_int(index_val)) {
+                        runtime_error(vm, "List indices must be integers.");
+                        return MS_RESULT_RUNTIME_ERROR;
+                    }
+                    int index = (int)ms_value_as_int(index_val);
+                    ms_list_t* list = ms_value_as_list(obj);
+                    ms_list_set(list, index, value);
+                } else if (ms_value_is_dict(obj)) {
+                    if (!ms_value_is_string(index_val)) {
+                        runtime_error(vm, "Dictionary keys must be strings.");
+                        return MS_RESULT_RUNTIME_ERROR;
+                    }
+                    ms_dict_t* dict = ms_value_as_dict(obj);
+                    ms_dict_set(dict, ms_value_as_string(index_val), value);
+                } else {
+                    runtime_error(vm, "Can only index lists and dicts.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                break;
+            }
+            case OP_FOR_ITER: {
+                uint8_t var_slot = READ_BYTE();
+                
+                // Stack should have: [..., iterable, index]
+                // Peek at the values without popping
+                ms_value_t index_val = peek(vm, 0);
+                ms_value_t iterable = peek(vm, 1);
+                
+                if (!ms_value_is_int(index_val)) {
+                    runtime_error(vm, "For loop index must be an integer.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                int index = (int)ms_value_as_int(index_val);
+                ms_value_t current_element = ms_value_nil();
+                bool has_next = false;
+                
+                if (ms_value_is_list(iterable)) {
+                    ms_list_t* list = ms_value_as_list(iterable);
+                    if (index < ms_list_len(list)) {
+                        current_element = ms_list_get(list, index);
+                        has_next = true;
+                    }
+                } else if (ms_value_is_dict(iterable)) {
+                    ms_dict_t* dict = ms_value_as_dict(iterable);
+                    if (index < ms_dict_len(dict)) {
+                        // For dicts, iterate over keys
+                        current_element = ms_value_string(dict->entries[index].key);
+                        has_next = true;
+                    }
+                } else if (ms_value_is_tuple(iterable)) {
+                    ms_tuple_t* tuple = ms_value_as_tuple(iterable);
+                    if (index < ms_tuple_len(tuple)) {
+                        current_element = ms_tuple_get(tuple, index);
+                        has_next = true;
+                    }
+                } else if (ms_value_is_string(iterable)) {
+                    // Support string iteration
+                    const char* str = ms_value_as_string(iterable);
+                    int str_len = strlen(str);
+                    if (index < str_len) {
+                        char char_str[2] = {str[index], '\0'};
+                        current_element = ms_value_string(char_str);
+                        has_next = true;
+                    }
+                } else {
+                    runtime_error(vm, "Can only iterate over lists, dicts, tuples, and strings.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                // Set the loop variable to current element
+                if (var_slot < MS_MAX_LOCALS) {
+                    frame->slots[var_slot] = current_element;
+                }
+                
+                // Update the index on the stack (increment it for next iteration)
+                vm->stack_top[-1] = ms_value_int(index + 1);
+                
+                // Push whether we have more elements (for jump condition)
+                ms_vm_push(vm, ms_value_bool(has_next));
+                break;
+            }
+            case OP_FOR_ITER_LOCAL: {
+                uint8_t var_slot = READ_BYTE();
+                uint8_t iter_slot = READ_BYTE();
+                uint8_t index_slot = READ_BYTE();
+                
+                // Get iterable and index from local variables
+                ms_value_t iterable = frame->slots[iter_slot];
+                ms_value_t index_val = frame->slots[index_slot];
+                
+                if (!ms_value_is_int(index_val)) {
+                    runtime_error(vm, "For loop index must be an integer.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                int index = (int)ms_value_as_int(index_val);
+                ms_value_t current_element = ms_value_nil();
+                bool has_next = false;
+                
+                if (ms_value_is_list(iterable)) {
+                    ms_list_t* list = ms_value_as_list(iterable);
+                    if (index < ms_list_len(list)) {
+                        current_element = ms_list_get(list, index);
+                        has_next = true;
+                    }
+                } else if (ms_value_is_dict(iterable)) {
+                    ms_dict_t* dict = ms_value_as_dict(iterable);
+                    if (index < ms_dict_len(dict)) {
+                        // For dicts, iterate over keys
+                        current_element = ms_value_string(dict->entries[index].key);
+                        has_next = true;
+                    }
+                } else if (ms_value_is_tuple(iterable)) {
+                    ms_tuple_t* tuple = ms_value_as_tuple(iterable);
+                    if (index < ms_tuple_len(tuple)) {
+                        current_element = ms_tuple_get(tuple, index);
+                        has_next = true;
+                    }
+                } else if (ms_value_is_string(iterable)) {
+                    // Support string iteration
+                    const char* str = ms_value_as_string(iterable);
+                    int str_len = strlen(str);
+                    if (index < str_len) {
+                        char char_str[2] = {str[index], '\0'};
+                        current_element = ms_value_string(char_str);
+                        has_next = true;
+                    }
+                } else {
+                    runtime_error(vm, "Can only iterate over lists, dicts, tuples, and strings.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                // Set the loop variable to current element
+                if (var_slot < MS_MAX_LOCALS) {
+                    frame->slots[var_slot] = current_element;
+                }
+                
+                // Update the index in local variable (increment it for next iteration)
+                frame->slots[index_slot] = ms_value_int(index + 1);
+                
+                // Push whether we have more elements (for jump condition)
+                ms_vm_push(vm, ms_value_bool(has_next));
                 break;
             }
         }

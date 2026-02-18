@@ -65,8 +65,12 @@ typedef enum {
     OP_METHOD,
     OP_BUILD_LIST,
     OP_BUILD_DICT,
+    OP_BUILD_TUPLE,
     OP_INDEX_GET,
     OP_INDEX_SET,
+    OP_FOR_ITER,
+    OP_FOR_ITER_LOCAL,
+    OP_FOR_END,
 } ms_opcode_t;
 
 // 调用帧

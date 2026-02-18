@@ -1,9 +1,5 @@
-# while 循环测试
-print("=== While Loop Tests ===")
-
-count = 0
-while count < 5:
-    print(count)
-    count = count + 1
-
-print("Done")
+x = 0
+while x < 2:
+    print(x)
+    x = x + 1
+print("done")
