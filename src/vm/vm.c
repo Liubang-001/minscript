@@ -229,17 +229,56 @@ static ms_result_t run(ms_vm_t* vm) {
             case OP_GREATER: BINARY_OP(ms_value_bool, >); break;
             case OP_LESS: BINARY_OP(ms_value_bool, <); break;
             case OP_ADD: {
-                if (ms_value_is_string(peek(vm, 0)) && ms_value_is_string(peek(vm, 1))) {
-                    // 字符串连接
-                    const char* b = ms_value_as_string(ms_vm_pop(vm));
-                    const char* a = ms_value_as_string(ms_vm_pop(vm));
-                    char* result = malloc(strlen(a) + strlen(b) + 1);
-                    strcpy(result, a);
-                    strcat(result, b);
+                ms_value_t b = peek(vm, 0);
+                ms_value_t a = peek(vm, 1);
+                
+                // If either operand is a string, convert both to strings and concatenate
+                if (ms_value_is_string(a) || ms_value_is_string(b)) {
+                    ms_vm_pop(vm);
+                    ms_vm_pop(vm);
+                    
+                    // Convert a to string
+                    char a_str[256];
+                    if (ms_value_is_string(a)) {
+                        strcpy(a_str, ms_value_as_string(a));
+                    } else if (ms_value_is_int(a)) {
+                        snprintf(a_str, sizeof(a_str), "%lld", (long long)ms_value_as_int(a));
+                    } else if (ms_value_is_float(a)) {
+                        snprintf(a_str, sizeof(a_str), "%g", ms_value_as_float(a));
+                    } else if (ms_value_is_bool(a)) {
+                        strcpy(a_str, ms_value_as_bool(a) ? "True" : "False");
+                    } else if (ms_value_is_nil(a)) {
+                        strcpy(a_str, "None");
+                    } else {
+                        strcpy(a_str, "<object>");
+                    }
+                    
+                    // Convert b to string
+                    char b_str[256];
+                    if (ms_value_is_string(b)) {
+                        strcpy(b_str, ms_value_as_string(b));
+                    } else if (ms_value_is_int(b)) {
+                        snprintf(b_str, sizeof(b_str), "%lld", (long long)ms_value_as_int(b));
+                    } else if (ms_value_is_float(b)) {
+                        snprintf(b_str, sizeof(b_str), "%g", ms_value_as_float(b));
+                    } else if (ms_value_is_bool(b)) {
+                        strcpy(b_str, ms_value_as_bool(b) ? "True" : "False");
+                    } else if (ms_value_is_nil(b)) {
+                        strcpy(b_str, "None");
+                    } else {
+                        strcpy(b_str, "<object>");
+                    }
+                    
+                    // Concatenate
+                    char* result = malloc(strlen(a_str) + strlen(b_str) + 1);
+                    strcpy(result, a_str);
+                    strcat(result, b_str);
                     ms_vm_push(vm, ms_value_string(result));
                     free(result);
-                } else if (ms_value_is_int(peek(vm, 0)) && ms_value_is_int(peek(vm, 1))) {
-                    BINARY_OP(ms_value_int, +);
+                } else if (ms_value_is_int(a) && ms_value_is_int(b)) {
+                    ms_vm_pop(vm);
+                    ms_vm_pop(vm);
+                    ms_vm_push(vm, ms_value_int(ms_value_as_int(a) + ms_value_as_int(b)));
                 } else {
                     runtime_error(vm, "Operands must be two numbers or two strings.");
                     return MS_RESULT_RUNTIME_ERROR;

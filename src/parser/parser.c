@@ -344,6 +344,123 @@ static void string(ms_parser_t* parser) {
     free(str);
 }
 
+// Parse f-string: f"text {expr} more text"
+static void fstring(ms_parser_t* parser) {
+    const char* start = parser->previous.start;
+    int total_length = parser->previous.length;
+    
+    // Skip 'f' or 'F' and opening quote
+    const char* content_start = start + 2;
+    int content_length = total_length - 3;  // Remove f, opening quote, closing quote
+    
+    // Create a buffer for the f-string content
+    char* content = malloc(content_length + 1);
+    memcpy(content, content_start, content_length);
+    content[content_length] = '\0';
+    
+    // Parse the f-string and collect parts
+    int parts_count = 0;
+    int pos = 0;
+    
+    for (int i = 0; i < content_length; i++) {
+        if (content[i] == '{') {
+            // Found expression start
+            if (i > pos) {
+                // Emit string part before expression
+                char* str_part = malloc(i - pos + 1);
+                memcpy(str_part, content + pos, i - pos);
+                str_part[i - pos] = '\0';
+                emit_constant(parser, ms_value_string(str_part));
+                free(str_part);
+                parts_count++;
+            }
+            
+            // Find matching closing brace
+            int brace_depth = 1;
+            int expr_start = i + 1;
+            int expr_end = i + 1;
+            
+            while (expr_end < content_length && brace_depth > 0) {
+                if (content[expr_end] == '{') brace_depth++;
+                else if (content[expr_end] == '}') brace_depth--;
+                if (brace_depth > 0) expr_end++;
+            }
+            
+            if (brace_depth != 0) {
+                free(content);
+                error(parser, "Unterminated expression in f-string.");
+                return;
+            }
+            
+            // Extract and parse the expression
+            int expr_length = expr_end - expr_start;
+            char* expr_str = malloc(expr_length + 1);
+            memcpy(expr_str, content + expr_start, expr_length);
+            expr_str[expr_length] = '\0';
+            
+            // Create a new lexer for the expression
+            ms_lexer_t expr_lexer;
+            ms_lexer_init(&expr_lexer, expr_str);
+            
+            // Create a new parser for the expression
+            ms_parser_t expr_parser;
+            expr_parser.lexer = &expr_lexer;
+            expr_parser.compiling_chunk = parser->compiling_chunk;
+            expr_parser.current.type = TOKEN_EOF;
+            expr_parser.current.start = "";
+            expr_parser.current.length = 0;
+            expr_parser.current.line = 0;
+            expr_parser.current.column = 0;
+            expr_parser.previous.type = TOKEN_EOF;
+            expr_parser.previous.start = "";
+            expr_parser.previous.length = 0;
+            expr_parser.previous.line = 0;
+            expr_parser.previous.column = 0;
+            expr_parser.had_error = false;
+            expr_parser.panic_mode = false;
+            expr_parser.function_chunk_count = 0;
+            
+            // Parse the expression
+            advance(&expr_parser);
+            expression(&expr_parser);
+            
+            // Convert the result to string using str() function
+            // We'll emit a call to the built-in str() function
+            // For now, we'll use a simple approach: wrap with str() call
+            // Actually, let's just emit the value and let OP_ADD handle it
+            // But we need to ensure it's a string, so we'll use a conversion
+            
+            free(expr_str);
+            parts_count++;
+            
+            pos = expr_end + 1;
+            i = expr_end;
+        }
+    }
+    
+    // Emit remaining string part
+    if (pos < content_length) {
+        char* str_part = malloc(content_length - pos + 1);
+        memcpy(str_part, content + pos, content_length - pos);
+        str_part[content_length - pos] = '\0';
+        emit_constant(parser, ms_value_string(str_part));
+        free(str_part);
+        parts_count++;
+    }
+    
+    // If no parts, emit empty string
+    if (parts_count == 0) {
+        emit_constant(parser, ms_value_string(""));
+    } else if (parts_count > 1) {
+        // Emit ADD operations to concatenate all parts
+        for (int i = 1; i < parts_count; i++) {
+            emit_byte(parser, OP_ADD);
+        }
+    }
+    
+    free(content);
+}
+
 static void unary(ms_parser_t* parser) {
     ms_token_type_t operator_type = parser->previous.type;
     
@@ -401,6 +518,7 @@ ms_parse_rule_t rules[] = {
     [TOKEN_LESS_EQUAL]    = {NULL,     binary,    PREC_COMPARISON},
     [TOKEN_IDENTIFIER]    = {identifier, NULL,    PREC_NONE},
     [TOKEN_STRING]        = {string,   NULL,      PREC_NONE},
+    [TOKEN_FSTRING]       = {fstring,  NULL,      PREC_NONE},
     [TOKEN_NUMBER]        = {number,   NULL,      PREC_NONE},
     [TOKEN_AND]           = {NULL,     and_,      PREC_AND},
     [TOKEN_CLASS]         = {NULL,     NULL,      PREC_NONE},

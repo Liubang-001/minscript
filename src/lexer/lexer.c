@@ -203,6 +203,33 @@ static ms_token_t identifier_token(ms_lexer_t* lexer) {
     while (is_alpha(peek(lexer)) || is_digit(peek(lexer))) {
         advance(lexer);
     }
+    
+    // Check for f-string: f"..." or f'...'
+    if ((lexer->current - lexer->start == 1) && 
+        (lexer->start[0] == 'f' || lexer->start[0] == 'F')) {
+        char next = peek(lexer);
+        if (next == '"' || next == '\'') {
+            char quote = next;
+            advance(lexer);  // consume quote
+            
+            // Scan until closing quote
+            while (peek(lexer) != quote && !is_at_end(lexer)) {
+                if (peek(lexer) == '\n') {
+                    lexer->line++;
+                    lexer->column = 0;
+                }
+                advance(lexer);
+            }
+            
+            if (is_at_end(lexer)) {
+                return error_token(lexer, "Unterminated f-string.");
+            }
+            
+            advance(lexer);  // consume closing quote
+            return make_token(lexer, TOKEN_FSTRING);
+        }
+    }
+    
     return make_token(lexer, identifier_type(lexer));
 }
 
