@@ -270,6 +270,17 @@ static void call(ms_parser_t* parser) {
     emit_bytes(parser, OP_CALL, arg_count);
 }
 
+static void attribute(ms_parser_t* parser) {
+    // Handle attribute access: obj.attr or obj.method()
+    consume(parser, TOKEN_IDENTIFIER, "Expect property name after '.'.");
+    
+    ms_token_t attr_name = parser->previous;
+    uint8_t attr_index = add_name(attr_name.start, attr_name.length);
+    
+    // Store the attribute name as a constant for later use
+    emit_bytes(parser, OP_GET_PROPERTY, attr_index);
+}
+
 // 全局变量名表（简化实现）
 static uint8_t add_name(const char* name, int length) {
     for (int i = 0; i < name_table_count; i++) {
@@ -369,49 +380,49 @@ static void or_(ms_parser_t* parser) {
 }
 
 ms_parse_rule_t rules[] = {
-    [TOKEN_LEFT_PAREN]    = {grouping, call,   PREC_CALL},
-    [TOKEN_RIGHT_PAREN]   = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_LEFT_BRACE]    = {NULL,     NULL,   PREC_NONE}, 
-    [TOKEN_RIGHT_BRACE]   = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_COMMA]         = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_DOT]           = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_MINUS]         = {unary,    binary, PREC_TERM},
-    [TOKEN_PLUS]          = {NULL,     binary, PREC_TERM},
-    [TOKEN_SEMICOLON]     = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_SLASH]         = {NULL,     binary, PREC_FACTOR},
-    [TOKEN_STAR]          = {NULL,     binary, PREC_FACTOR},
-    [TOKEN_BANG]          = {unary,    NULL,   PREC_NONE},
-    [TOKEN_BANG_EQUAL]    = {NULL,     binary, PREC_EQUALITY},
-    [TOKEN_EQUAL]         = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_EQUAL_EQUAL]   = {NULL,     binary, PREC_EQUALITY},
-    [TOKEN_GREATER]       = {NULL,     binary, PREC_COMPARISON},
-    [TOKEN_GREATER_EQUAL] = {NULL,     binary, PREC_COMPARISON},
-    [TOKEN_LESS]          = {NULL,     binary, PREC_COMPARISON},
-    [TOKEN_LESS_EQUAL]    = {NULL,     binary, PREC_COMPARISON},
-    [TOKEN_IDENTIFIER]    = {identifier, NULL, PREC_NONE},
-    [TOKEN_STRING]        = {string,   NULL,   PREC_NONE},
-    [TOKEN_NUMBER]        = {number,   NULL,   PREC_NONE},
-    [TOKEN_AND]           = {NULL,     and_,   PREC_AND},
-    [TOKEN_CLASS]         = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_ELSE]          = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_FALSE]         = {literal,  NULL,   PREC_NONE},
-    [TOKEN_FOR]           = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_FUNC]          = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_IF]            = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_NIL]           = {literal,  NULL,   PREC_NONE},
-    [TOKEN_NONE]          = {literal,  NULL,   PREC_NONE},
-    [TOKEN_OR]            = {NULL,     or_,    PREC_OR},
-    [TOKEN_RETURN]        = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_TRUE]          = {literal,  NULL,   PREC_NONE},
-    [TOKEN_VAR]           = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_WHILE]         = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_DEF]           = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_PASS]          = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_IN]            = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_NOT]           = {unary,    NULL,   PREC_NONE},
-    [TOKEN_IS]            = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_ERROR]         = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_EOF]           = {NULL,     NULL,   PREC_NONE},
+    [TOKEN_LEFT_PAREN]    = {grouping, call,      PREC_CALL},
+    [TOKEN_RIGHT_PAREN]   = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_LEFT_BRACE]    = {NULL,     NULL,      PREC_NONE}, 
+    [TOKEN_RIGHT_BRACE]   = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_COMMA]         = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_DOT]           = {NULL,     attribute, PREC_CALL},
+    [TOKEN_MINUS]         = {unary,    binary,    PREC_TERM},
+    [TOKEN_PLUS]          = {NULL,     binary,    PREC_TERM},
+    [TOKEN_SEMICOLON]     = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_SLASH]         = {NULL,     binary,    PREC_FACTOR},
+    [TOKEN_STAR]          = {NULL,     binary,    PREC_FACTOR},
+    [TOKEN_BANG]          = {unary,    NULL,      PREC_NONE},
+    [TOKEN_BANG_EQUAL]    = {NULL,     binary,    PREC_EQUALITY},
+    [TOKEN_EQUAL]         = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_EQUAL_EQUAL]   = {NULL,     binary,    PREC_EQUALITY},
+    [TOKEN_GREATER]       = {NULL,     binary,    PREC_COMPARISON},
+    [TOKEN_GREATER_EQUAL] = {NULL,     binary,    PREC_COMPARISON},
+    [TOKEN_LESS]          = {NULL,     binary,    PREC_COMPARISON},
+    [TOKEN_LESS_EQUAL]    = {NULL,     binary,    PREC_COMPARISON},
+    [TOKEN_IDENTIFIER]    = {identifier, NULL,    PREC_NONE},
+    [TOKEN_STRING]        = {string,   NULL,      PREC_NONE},
+    [TOKEN_NUMBER]        = {number,   NULL,      PREC_NONE},
+    [TOKEN_AND]           = {NULL,     and_,      PREC_AND},
+    [TOKEN_CLASS]         = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_ELSE]          = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_FALSE]         = {literal,  NULL,      PREC_NONE},
+    [TOKEN_FOR]           = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_FUNC]          = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_IF]            = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_NIL]           = {literal,  NULL,      PREC_NONE},
+    [TOKEN_NONE]          = {literal,  NULL,      PREC_NONE},
+    [TOKEN_OR]            = {NULL,     or_,       PREC_OR},
+    [TOKEN_RETURN]        = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_TRUE]          = {literal,  NULL,      PREC_NONE},
+    [TOKEN_VAR]           = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_WHILE]         = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_DEF]           = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_PASS]          = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_IN]            = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_NOT]           = {unary,    NULL,      PREC_NONE},
+    [TOKEN_IS]            = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_ERROR]         = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_EOF]           = {NULL,     NULL,      PREC_NONE},
 };
 
 static void parse_precedence(ms_parser_t* parser, ms_precedence_t precedence) {
@@ -652,8 +663,9 @@ static void import_statement(ms_parser_t* parser) {
             var_index = add_name(parser->previous.start, parser->previous.length);
         }
         
-        // 简化实现：只是定义一个nil值
-        emit_byte(parser, OP_NIL);
+        // 加载模块
+        uint8_t module_index = add_name(module_name.start, module_name.length);
+        emit_bytes(parser, OP_LOAD_MODULE, module_index);
         emit_bytes(parser, OP_DEFINE_GLOBAL, var_index);
     } else {
         // import module
@@ -667,8 +679,9 @@ static void import_statement(ms_parser_t* parser) {
             var_index = add_name(parser->previous.start, parser->previous.length);
         }
         
-        // 简化实现：只是定义一个nil值
-        emit_byte(parser, OP_NIL);
+        // 加载模块
+        uint8_t module_index = add_name(module_name.start, module_name.length);
+        emit_bytes(parser, OP_LOAD_MODULE, module_index);
         emit_bytes(parser, OP_DEFINE_GLOBAL, var_index);
     }
     

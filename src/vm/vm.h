@@ -55,10 +55,12 @@ typedef enum {
     OP_JUMP_IF_TRUE,
     OP_LOOP,
     OP_CALL,
+    OP_CALL_METHOD,
     OP_FUNCTION,
     OP_CLOSURE,
     OP_CLOSE_UPVALUE,
     OP_RETURN,
+    OP_LOAD_MODULE,
     OP_CLASS,
     OP_METHOD,
     OP_BUILD_LIST,
@@ -96,6 +98,10 @@ struct ms_vm {
     int frame_count;
     
     ms_global_t* globals;
+    
+    // For tracking module method calls
+    const char* last_method_name;
+    const char* last_module_name;
     
     char error_message[256];
     bool has_error;

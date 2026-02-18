@@ -1,4 +1,6 @@
 #include "miniscript.h"
+#include "ext/ext.h"
+#include "ext/http.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -77,6 +79,10 @@ int main(int argc, const char* argv[]) {
     ms_vm_register_function(vm, "print", builtin_print);
     ms_vm_register_function(vm, "len", builtin_len);
     
+    // 注册扩展
+    ms_extension_t* http_ext = ms_http_extension_create();
+    ms_register_extension(vm, http_ext);
+    
     if (argc == 1) {
         printf("MiniScript v%d.%d.%d (Python 3 syntax)\n", 
                MS_VERSION_MAJOR, MS_VERSION_MINOR, MS_VERSION_PATCH);
@@ -88,6 +94,7 @@ int main(int argc, const char* argv[]) {
         exit(64);
     }
     
+    ms_http_extension_destroy(http_ext);
     ms_vm_free(vm);
     return 0;
 }

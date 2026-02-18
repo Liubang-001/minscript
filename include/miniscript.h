@@ -51,6 +51,7 @@ typedef enum {
     MS_VAL_STRING,
     MS_VAL_FUNCTION,
     MS_VAL_NATIVE_FUNC,
+    MS_VAL_MODULE,
     MS_VAL_OBJECT,
     MS_VAL_LIST,
     MS_VAL_DICT,
@@ -68,6 +69,7 @@ struct ms_value {
         char* string;
         struct ms_function* function;
         ms_native_func_t* native_func;
+        void* module;  // Extension module pointer
         ms_object_t* object;
     } as;
 };

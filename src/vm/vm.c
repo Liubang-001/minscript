@@ -1,4 +1,5 @@
 #include "vm.h"
+#include "../ext/ext.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -225,7 +226,23 @@ static ms_result_t run(ms_vm_t* vm) {
                 uint8_t arg_count = READ_BYTE();
                 ms_value_t func_val = peek(vm, arg_count);
                 
-                if (func_val.type == MS_VAL_NATIVE_FUNC && func_val.as.native_func != NULL) {
+                // Check if this is a module method call
+                if (func_val.type == MS_VAL_MODULE && vm->last_method_name != NULL) {
+                    // Call extension method
+                    const char* module_name = (const char*)func_val.as.module;
+                    const char* method_name = vm->last_method_name;
+                    
+                    ms_value_t* args = vm->stack_top - arg_count;
+                    
+                    // Call the extension function
+                    ms_value_t result = ms_call_extension_function(vm, module_name, method_name, arg_count, args);
+                    
+                    vm->stack_top -= arg_count + 1;
+                    ms_vm_push(vm, result);
+                    
+                    vm->last_method_name = NULL;
+                    vm->last_module_name = NULL;
+                } else if (func_val.type == MS_VAL_NATIVE_FUNC && func_val.as.native_func != NULL) {
                     // 原生函数调用
                     ms_value_t* args = vm->stack_top - arg_count;
                     ms_value_t result = func_val.as.native_func->func(vm, arg_count, args);
@@ -281,6 +298,46 @@ static ms_result_t run(ms_vm_t* vm) {
             case OP_RETURN: {
                 return MS_RESULT_OK;
             }
+            case OP_GET_PROPERTY: {
+                uint8_t name_index = READ_BYTE();
+                if (name_index >= name_table_count) {
+                    runtime_error(vm, "Invalid property name index.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                ms_value_t obj = ms_vm_pop(vm);
+                const char* prop_name = name_table_names[name_index];
+                
+                // If it's a module, store the method name for the call handler
+                if (obj.type == MS_VAL_MODULE) {
+                    vm->last_module_name = (const char*)obj.as.module;
+                    vm->last_method_name = prop_name;
+                    ms_vm_push(vm, obj);
+                } else {
+                    // For other types, just return nil
+                    vm->last_method_name = NULL;
+                    vm->last_module_name = NULL;
+                    ms_vm_push(vm, ms_value_nil());
+                }
+                break;
+            }
+            case OP_LOAD_MODULE: {
+                uint8_t module_index = READ_BYTE();
+                if (module_index >= name_table_count) {
+                    runtime_error(vm, "Invalid module name index.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                const char* module_name = name_table_names[module_index];
+                
+                // Create a module value
+                ms_value_t module_val;
+                module_val.type = MS_VAL_MODULE;
+                module_val.as.module = (void*)module_name;  // Store module name as pointer
+                
+                ms_vm_push(vm, module_val);
+                break;
+            }
         }
     }
 
@@ -298,6 +355,8 @@ ms_vm_t* ms_vm_new(void) {
     vm->jit_enabled = false;
     vm->hotspot_threshold = 100;
     vm->frame_count = 0;
+    vm->last_method_name = NULL;
+    vm->last_module_name = NULL;
     return vm;
 }
 
