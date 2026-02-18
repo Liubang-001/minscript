@@ -17,6 +17,8 @@ static void parse_precedence(ms_parser_t* parser, ms_precedence_t precedence);
 static int emit_jump(ms_parser_t* parser, uint8_t instruction);
 static void patch_jump(ms_parser_t* parser, int offset);
 static void emit_loop(ms_parser_t* parser, int loop_start);
+static void with_statement(ms_parser_t* parser);
+static void import_statement(ms_parser_t* parser);
 
 static ms_chunk_t* current_chunk(ms_parser_t* parser) {
     return parser->compiling_chunk;
@@ -600,6 +602,84 @@ static void for_statement(ms_parser_t* parser) {
     end_scope(parser);
 }
 
+static void with_statement(ms_parser_t* parser) {
+    // with expression as variable:
+    expression(parser);
+    
+    consume(parser, TOKEN_AS, "Expect 'as' after with expression.");
+    consume(parser, TOKEN_IDENTIFIER, "Expect variable name after 'as'.");
+    
+    uint8_t var_index = add_name(parser->previous.start, parser->previous.length);
+    
+    consume(parser, TOKEN_COLON, "Expect ':' after with clause.");
+    consume(parser, TOKEN_NEWLINE, "Expect newline after ':'.");
+    
+    // 将表达式结果存储到变量
+    emit_bytes(parser, OP_DEFINE_GLOBAL, var_index);
+    
+    begin_scope();
+    consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
+    
+    while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
+        declaration(parser);
+    }
+    
+    if (!check(parser, TOKEN_EOF)) {
+        consume(parser, TOKEN_DEDENT, "Expect dedent after block.");
+    }
+    end_scope(parser);
+}
+
+static void import_statement(ms_parser_t* parser) {
+    // import module
+    // import module as alias
+    // from module import name
+    // from module import name as alias
+    
+    if (match(parser, TOKEN_FROM)) {
+        // from module import name
+        consume(parser, TOKEN_IDENTIFIER, "Expect module name after 'from'.");
+        ms_token_t module_name = parser->previous;
+        
+        consume(parser, TOKEN_IMPORT, "Expect 'import' after module name.");
+        consume(parser, TOKEN_IDENTIFIER, "Expect name to import.");
+        ms_token_t import_name = parser->previous;
+        
+        uint8_t var_index = add_name(import_name.start, import_name.length);
+        
+        if (match(parser, TOKEN_AS)) {
+            consume(parser, TOKEN_IDENTIFIER, "Expect alias name after 'as'.");
+            var_index = add_name(parser->previous.start, parser->previous.length);
+        }
+        
+        // 简化实现：只是定义一个nil值
+        emit_byte(parser, OP_NIL);
+        emit_bytes(parser, OP_DEFINE_GLOBAL, var_index);
+    } else {
+        // import module
+        consume(parser, TOKEN_IDENTIFIER, "Expect module name after 'import'.");
+        ms_token_t module_name = parser->previous;
+        
+        uint8_t var_index = add_name(module_name.start, module_name.length);
+        
+        if (match(parser, TOKEN_AS)) {
+            consume(parser, TOKEN_IDENTIFIER, "Expect alias name after 'as'.");
+            var_index = add_name(parser->previous.start, parser->previous.length);
+        }
+        
+        // 简化实现：只是定义一个nil值
+        emit_byte(parser, OP_NIL);
+        emit_bytes(parser, OP_DEFINE_GLOBAL, var_index);
+    }
+    
+    // 消费语句后的换行符（如果有）
+    if (match(parser, TOKEN_NEWLINE)) {
+        // 换行符已消费
+    } else if (!check(parser, TOKEN_EOF) && !check(parser, TOKEN_DEDENT)) {
+        error(parser, "Expect newline after import.");
+    }
+}
+
 static int emit_jump(ms_parser_t* parser, uint8_t instruction) {
     emit_byte(parser, instruction);
     emit_byte(parser, 0xff);
@@ -635,6 +715,8 @@ static void statement(ms_parser_t* parser) {
         while_statement(parser);
     } else if (match(parser, TOKEN_FOR)) {
         for_statement(parser);
+    } else if (match(parser, TOKEN_WITH)) {
+        with_statement(parser);
     } else if (match(parser, TOKEN_PASS)) {
         // 消费语句后的换行符（如果有）
         if (match(parser, TOKEN_NEWLINE)) {
@@ -767,6 +849,8 @@ static void declaration(ms_parser_t* parser) {
         var_declaration(parser);
     } else if (match(parser, TOKEN_DEF)) {
         function_declaration(parser);
+    } else if (match(parser, TOKEN_IMPORT) || check(parser, TOKEN_FROM)) {
+        import_statement(parser);
     } else {
         statement(parser);
     }
@@ -784,6 +868,7 @@ static void declaration(ms_parser_t* parser) {
                 case TOKEN_IF:
                 case TOKEN_WHILE:
                 case TOKEN_RETURN:
+                case TOKEN_IMPORT:
                     return;
                 default:
                     ; // Do nothing.

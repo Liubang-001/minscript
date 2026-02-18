@@ -187,7 +187,14 @@ static ms_token_type_t identifier_type(ms_lexer_t* lexer) {
         case 'T': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "rue", TOKEN_TRUE);
         case 't': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "rue", TOKEN_TRUE);
         case 'v': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "ar", TOKEN_VAR);
-        case 'w': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "hile", TOKEN_WHILE);
+        case 'w': 
+            if (lexer->current - lexer->start > 1) {
+                switch (lexer->start[1]) {
+                    case 'h': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "ile", TOKEN_WHILE);
+                    case 'i': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "th", TOKEN_WITH);
+                }
+            }
+            break;
     }
     return TOKEN_IDENTIFIER;
 }
