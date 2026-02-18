@@ -5,9 +5,82 @@
 #include <string.h>
 #include <stdarg.h>
 
+#ifdef _WIN32
+    #include <windows.h>
+    #define PATH_SEPARATOR "\\"
+#else
+    #include <unistd.h>
+    #define PATH_SEPARATOR "/"
+#endif
+
 // 外部名称表
 char* name_table_names[256];
 int name_table_count = 0;
+
+// 获取可执行文件所在目录
+static void get_exe_directory(char* buffer, size_t size) {
+#ifdef _WIN32
+    GetModuleFileNameA(NULL, buffer, size);
+    char* last_sep = strrchr(buffer, '\\');
+    if (last_sep) {
+        *(last_sep + 1) = '\0';
+    }
+#else
+    char path[1024];
+    ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
+    if (len != -1) {
+        path[len] = '\0';
+        char* last_sep = strrchr(path, '/');
+        if (last_sep) {
+            *last_sep = '\0';
+        }
+        strncpy(buffer, path, size - 1);
+        buffer[size - 1] = '\0';
+    } else {
+        buffer[0] = '.';
+        buffer[1] = '\0';
+    }
+#endif
+}
+
+// 尝试从多个路径加载动态库
+static ms_dynamic_extension_t* try_load_library(const char* module_name) {
+    char lib_path[1024];
+    char exe_dir[1024];
+    
+    // 获取可执行文件目录
+    get_exe_directory(exe_dir, sizeof(exe_dir));
+    
+    // 尝试路径1: 当前目录 + 模块名 + .dll/.so/.dylib
+#ifdef _WIN32
+    snprintf(lib_path, sizeof(lib_path), "%s%s.dll", exe_dir, module_name);
+#elif __APPLE__
+    snprintf(lib_path, sizeof(lib_path), "%s/%s.dylib", exe_dir, module_name);
+#else
+    snprintf(lib_path, sizeof(lib_path), "%s/%s.so", exe_dir, module_name);
+#endif
+    
+    ms_dynamic_extension_t* dyn_ext = ms_load_extension_library(lib_path);
+    if (dyn_ext) return dyn_ext;
+    
+    // 尝试路径2: 当前目录 + lib + 模块名 + .dll/.so/.dylib
+#ifdef _WIN32
+    snprintf(lib_path, sizeof(lib_path), "%slib%s.dll", exe_dir, module_name);
+#elif __APPLE__
+    snprintf(lib_path, sizeof(lib_path), "%s/lib%s.dylib", exe_dir, module_name);
+#else
+    snprintf(lib_path, sizeof(lib_path), "%s/lib%s.so", exe_dir, module_name);
+#endif
+    
+    dyn_ext = ms_load_extension_library(lib_path);
+    if (dyn_ext) return dyn_ext;
+    
+    // 尝试路径3: 直接使用模块名（系统路径）
+    dyn_ext = ms_load_extension_library(module_name);
+    if (dyn_ext) return dyn_ext;
+    
+    return NULL;
+}
 
 static void runtime_error(ms_vm_t* vm, const char* format, ...) {
     va_list args;
@@ -330,6 +403,18 @@ static ms_result_t run(ms_vm_t* vm) {
                 
                 const char* module_name = name_table_names[module_index];
                 
+                // Try to load as dynamic library
+                ms_dynamic_extension_t* dyn_ext = try_load_library(module_name);
+                if (dyn_ext) {
+                    // Register the dynamically loaded extension
+                    ms_register_extension(vm, dyn_ext->ext);
+                    
+                    // Store the dynamic extension for cleanup later
+                    if (vm->dynamic_extension_count < 32) {
+                        vm->dynamic_extensions[vm->dynamic_extension_count++] = dyn_ext;
+                    }
+                }
+                
                 // Create a module value
                 ms_value_t module_val;
                 module_val.type = MS_VAL_MODULE;
@@ -357,10 +442,16 @@ ms_vm_t* ms_vm_new(void) {
     vm->frame_count = 0;
     vm->last_method_name = NULL;
     vm->last_module_name = NULL;
+    vm->dynamic_extension_count = 0;
     return vm;
 }
 
 void ms_vm_free(ms_vm_t* vm) {
+    // 卸载动态扩展
+    for (int i = 0; i < vm->dynamic_extension_count; i++) {
+        ms_unload_extension_library((ms_dynamic_extension_t*)vm->dynamic_extensions[i]);
+    }
+    
     // 释放全局变量
     ms_global_t* current = vm->globals;
     while (current != NULL) {

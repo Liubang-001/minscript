@@ -103,6 +103,10 @@ struct ms_vm {
     const char* last_method_name;
     const char* last_module_name;
     
+    // For dynamic extensions
+    void* dynamic_extensions[32];
+    int dynamic_extension_count;
+    
     char error_message[256];
     bool has_error;
     

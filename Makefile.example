@@ -1,0 +1,33 @@
+# 编译示例扩展为动态库
+
+CC = gcc
+CFLAGS = -Wall -Wextra -std=c99 -O2 -fPIC
+INCLUDE_DIR = include
+SRC_DIR = src
+
+# 平台特定设置
+ifeq ($(OS),Windows_NT)
+    EXAMPLE_EXT = example.dll
+else
+    UNAME_S := $(shell uname -s)
+    ifeq ($(UNAME_S),Darwin)
+        EXAMPLE_EXT = example.dylib
+        LDFLAGS = -dynamiclib
+    else
+        EXAMPLE_EXT = example.so
+        LDFLAGS = -shared
+    endif
+endif
+
+.PHONY: all clean
+
+all: $(EXAMPLE_EXT)
+
+$(EXAMPLE_EXT): $(SRC_DIR)/ext/example_ext.c
+	$(CC) $(CFLAGS) -I$(INCLUDE_DIR) $(LDFLAGS) -o $@ $^
+
+clean:
+	rm -f $(EXAMPLE_EXT) libexample.a
+
+install: $(EXAMPLE_EXT)
+	cp $(EXAMPLE_EXT) /usr/local/lib/

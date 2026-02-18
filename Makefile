@@ -10,6 +10,7 @@ ifeq ($(OS),Windows_NT)
     RM = del /Q
     MKDIR = mkdir
     CP = copy
+    LDFLAGS += 
 else
     TARGET = libminiscript.a
     SHARED_TARGET = libminiscript.so
@@ -17,6 +18,7 @@ else
     RM = rm -rf
     MKDIR = mkdir -p
     CP = cp
+    LDFLAGS += -ldl
 endif
 
 # 目录
