@@ -35,6 +35,7 @@ if not exist "%BUILD_DIR%\jit" mkdir "%BUILD_DIR%\jit"
 if not exist "%BUILD_DIR%\api" mkdir "%BUILD_DIR%\api"
 if not exist "%BUILD_DIR%\stdlib" mkdir "%BUILD_DIR%\stdlib"
 if not exist "%BUILD_DIR%\ext" mkdir "%BUILD_DIR%\ext"
+if not exist "%BUILD_DIR%\builtins" mkdir "%BUILD_DIR%\builtins"
 
 echo 编译源文件...
 
@@ -50,6 +51,7 @@ REM 编译所有源文件
 %CC% %CFLAGS% -I%INCLUDE_DIR% -c %SRC_DIR%\ext\http.c -o %BUILD_DIR%\ext\http.o
 %CC% %CFLAGS% -I%INCLUDE_DIR% -c %SRC_DIR%\ext\math_ext.c -o %BUILD_DIR%\ext\math_ext.o
 %CC% %CFLAGS% -I%INCLUDE_DIR% -c %SRC_DIR%\ext\string_ext.c -o %BUILD_DIR%\ext\string_ext.o
+%CC% %CFLAGS% -I%INCLUDE_DIR% -c %SRC_DIR%\builtins\builtins.c -o %BUILD_DIR%\builtins\builtins.o
 
 if errorlevel 1 (
     echo 编译失败！
@@ -58,10 +60,10 @@ if errorlevel 1 (
 )
 
 echo 创建静态库...
-ar rcs libminiscript.a %BUILD_DIR%\core\*.o %BUILD_DIR%\lexer\*.o %BUILD_DIR%\parser\*.o %BUILD_DIR%\vm\*.o %BUILD_DIR%\jit\*.o %BUILD_DIR%\ext\*.o
+ar rcs libminiscript.a %BUILD_DIR%\core\*.o %BUILD_DIR%\lexer\*.o %BUILD_DIR%\parser\*.o %BUILD_DIR%\vm\*.o %BUILD_DIR%\jit\*.o %BUILD_DIR%\ext\*.o %BUILD_DIR%\builtins\*.o
 
 echo 创建动态库...
-%CC% -shared -o miniscript.dll %BUILD_DIR%\core\*.o %BUILD_DIR%\lexer\*.o %BUILD_DIR%\parser\*.o %BUILD_DIR%\vm\*.o %BUILD_DIR%\jit\*.o %BUILD_DIR%\ext\*.o %LDFLAGS% -Wl,--out-implib,libminiscript.lib
+%CC% -shared -o miniscript.dll %BUILD_DIR%\core\*.o %BUILD_DIR%\lexer\*.o %BUILD_DIR%\parser\*.o %BUILD_DIR%\vm\*.o %BUILD_DIR%\jit\*.o %BUILD_DIR%\ext\*.o %BUILD_DIR%\builtins\*.o %LDFLAGS% -Wl,--out-implib,libminiscript.lib
 
 echo 编译解释器...
 %CC% %CFLAGS% -I%INCLUDE_DIR% -o miniscript.exe %SRC_DIR%\main.c -L. -lminiscript %LDFLAGS%

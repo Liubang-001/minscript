@@ -3,6 +3,7 @@
 #include "ext/http.h"
 #include "ext/math_ext.h"
 #include "ext/string_ext.h"
+#include "builtins/builtins.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,45 +42,11 @@ static void run_file(ms_vm_t* vm, const char* path) {
     }
 }
 
-// 内置函数示例
-static ms_value_t builtin_print(ms_vm_t* vm, int argc, ms_value_t* args) {
-    for (int i = 0; i < argc; i++) {
-        if (i > 0) printf(" ");
-        ms_value_t value = args[i];
-        switch (value.type) {
-            case MS_VAL_BOOL:
-                printf(ms_value_as_bool(value) ? "True" : "False");
-                break;
-            case MS_VAL_NIL: printf("None"); break;
-            case MS_VAL_INT: printf("%lld", (long long)ms_value_as_int(value)); break;
-            case MS_VAL_FLOAT: printf("%g", ms_value_as_float(value)); break;
-            case MS_VAL_STRING: printf("%s", ms_value_as_string(value)); break;
-            default: printf("<object>"); break;
-        }
-    }
-    printf("\n");
-    return ms_value_nil();
-}
-
-static ms_value_t builtin_len(ms_vm_t* vm, int argc, ms_value_t* args) {
-    (void)vm;
-    if (argc != 1) {
-        return ms_value_nil();
-    }
-    
-    if (ms_value_is_string(args[0])) {
-        return ms_value_int(strlen(ms_value_as_string(args[0])));
-    }
-    
-    return ms_value_nil();
-}
-
 int main(int argc, const char* argv[]) {
     ms_vm_t* vm = ms_vm_new();
     
-    // 注册内置函数 (Python 3 style)
-    ms_vm_register_function(vm, "print", builtin_print);
-    ms_vm_register_function(vm, "len", builtin_len);
+    // 注册所有内置函数
+    ms_register_builtins(vm);
     
     // 注册扩展
     ms_extension_t* http_ext = ms_http_extension_create();
