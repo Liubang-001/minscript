@@ -147,6 +147,12 @@ static void begin_scope() {
     scope_depth++;
 }
 
+static void skip_newlines(ms_parser_t* parser) {
+    while (match(parser, TOKEN_NEWLINE)) {
+        // Skip empty lines
+    }
+}
+
 static void end_scope(ms_parser_t* parser) {
     scope_depth--;
     
@@ -764,6 +770,8 @@ static void if_statement(ms_parser_t* parser) {
     consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
     
     while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
+        skip_newlines(parser);
+        if (check(parser, TOKEN_DEDENT) || check(parser, TOKEN_EOF)) break;
         declaration(parser);
     }
     
@@ -794,6 +802,8 @@ static void if_statement(ms_parser_t* parser) {
         consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
         
         while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
+            skip_newlines(parser);
+            if (check(parser, TOKEN_DEDENT) || check(parser, TOKEN_EOF)) break;
             declaration(parser);
         }
         
@@ -818,6 +828,8 @@ static void if_statement(ms_parser_t* parser) {
         consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
         
         while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
+            skip_newlines(parser);
+            if (check(parser, TOKEN_DEDENT) || check(parser, TOKEN_EOF)) break;
             declaration(parser);
         }
         
@@ -847,6 +859,8 @@ static void while_statement(ms_parser_t* parser) {
     consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
     
     while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
+        skip_newlines(parser);
+        if (check(parser, TOKEN_DEDENT) || check(parser, TOKEN_EOF)) break;
         declaration(parser);
     }
     
@@ -909,6 +923,8 @@ static void for_statement(ms_parser_t* parser) {
     
     // Parse loop body
     while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
+        skip_newlines(parser);
+        if (check(parser, TOKEN_DEDENT) || check(parser, TOKEN_EOF)) break;
         declaration(parser);
     }
     
@@ -945,6 +961,8 @@ static void with_statement(ms_parser_t* parser) {
     consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
     
     while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
+        skip_newlines(parser);
+        if (check(parser, TOKEN_DEDENT) || check(parser, TOKEN_EOF)) break;
         declaration(parser);
     }
     
@@ -1128,6 +1146,8 @@ static void function_declaration(ms_parser_t* parser) {
     consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
     
     while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
+        skip_newlines(parser);
+        if (check(parser, TOKEN_DEDENT) || check(parser, TOKEN_EOF)) break;
         declaration(parser);
     }
     

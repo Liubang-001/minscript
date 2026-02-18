@@ -21,3 +21,11 @@ my_string = "hello"
 print("Testing string iteration:")
 for char in my_string:
     print(char)
+
+
+def basic_syntax():
+    c = "Hello"
+    
+    print(c)
+
+basic_syntax()

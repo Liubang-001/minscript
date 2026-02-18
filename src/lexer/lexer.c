@@ -256,36 +256,41 @@ ms_token_t ms_lexer_scan_token(ms_lexer_t* lexer) {
     if (lexer->at_line_start) {
         lexer->at_line_start = false;
         
-        // 计算当前行的缩进
-        int indent = 0;
-        while (peek(lexer) == ' ' || peek(lexer) == '\t') {
-            if (peek(lexer) == ' ') indent++;
-            else indent += 4; // tab = 4 spaces
-            advance(lexer);
-        }
-        
-        lexer->start = lexer->current;
-        
-        // 跳过空行和注释行
-        if (peek(lexer) == '\n' || peek(lexer) == '#' || is_at_end(lexer)) {
-            // 如果是注释，跳过到行尾
-            if (peek(lexer) == '#') {
-                while (peek(lexer) != '\n' && !is_at_end(lexer)) {
-                    advance(lexer);
-                }
+        // 跳过所有空行和注释行
+        while (true) {
+            // 计算当前行的缩进
+            int indent = 0;
+            while (peek(lexer) == ' ' || peek(lexer) == '\t') {
+                if (peek(lexer) == ' ') indent++;
+                else indent += 4; // tab = 4 spaces
+                advance(lexer);
             }
-            // 如果是换行符，处理它
+            
+            lexer->start = lexer->current;
+            
+            // 检查是否是空行或注释行
             if (peek(lexer) == '\n') {
+                // 空行，跳过
                 advance(lexer);
                 lexer->line++;
                 lexer->column = 1;
-                lexer->at_line_start = true;
-                lexer->start = lexer->current;
-                return ms_lexer_scan_token(lexer); // 递归处理下一行
+                continue;  // 继续处理下一行
+            } else if (peek(lexer) == '#') {
+                // 注释行，跳过到行尾
+                while (peek(lexer) != '\n' && !is_at_end(lexer)) {
+                    advance(lexer);
+                }
+                if (peek(lexer) == '\n') {
+                    advance(lexer);
+                    lexer->line++;
+                    lexer->column = 1;
+                    continue;  // 继续处理下一行
+                }
+            } else if (is_at_end(lexer)) {
+                return make_token(lexer, TOKEN_EOF);
             }
-            if (is_at_end(lexer)) return make_token(lexer, TOKEN_EOF);
-        } else {
-            // 比较缩进级别
+            
+            // 不是空行或注释行，处理缩进
             int current_indent = lexer->indent_stack[lexer->indent_level];
             
             if (indent > current_indent) {
@@ -310,6 +315,9 @@ ms_token_t ms_lexer_scan_token(ms_lexer_t* lexer) {
                     return make_token(lexer, TOKEN_DEDENT);
                 }
             }
+            
+            // 缩进级别相同，继续正常处理
+            break;
         }
     }
 

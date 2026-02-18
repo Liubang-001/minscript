@@ -9,7 +9,6 @@ Python 3 语法特性综合示例
 
 import asyncio
 import json
-import sys
 from typing import Optional, Union, List, Dict, Any, Generator, AsyncGenerator
 
 # ==================== 1. 基础语法 ====================
