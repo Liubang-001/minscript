@@ -80,21 +80,54 @@ static void skip_whitespace(ms_lexer_t* lexer) {
 }
 
 static ms_token_t string_token(ms_lexer_t* lexer) {
-    while (peek(lexer) != '"' && !is_at_end(lexer)) {
-        if (peek(lexer) == '\n') {
-            lexer->line++;
-            lexer->column = 0;
+    // 检查是否是三引号字符串
+    bool is_triple = false;
+    if (peek(lexer) == '"' && peek_next(lexer) == '"') {
+        is_triple = true;
+        advance(lexer);  // 第二个引号
+        advance(lexer);  // 第三个引号
+    }
+    
+    if (is_triple) {
+        // 三引号字符串 - 可以跨多行
+        while (!is_at_end(lexer)) {
+            // 检查是否遇到结束的三引号
+            if (peek(lexer) == '"' && peek_next(lexer) == '"' && 
+                (lexer->current + 2 < lexer->start + strlen(lexer->start) && 
+                 lexer->current[2] == '"')) {
+                // 找到结束的三引号
+                advance(lexer);  // 第一个引号
+                advance(lexer);  // 第二个引号
+                advance(lexer);  // 第三个引号
+                return make_token(lexer, TOKEN_STRING);
+            }
+            
+            if (peek(lexer) == '\n') {
+                lexer->line++;
+                lexer->column = 0;
+            }
+            advance(lexer);
         }
+        
+        return error_token(lexer, "Unterminated triple-quoted string.");
+    } else {
+        // 普通字符串 - 单行
+        while (peek(lexer) != '"' && !is_at_end(lexer)) {
+            if (peek(lexer) == '\n') {
+                lexer->line++;
+                lexer->column = 0;
+            }
+            advance(lexer);
+        }
+
+        if (is_at_end(lexer)) {
+            return error_token(lexer, "Unterminated string.");
+        }
+
+        // 结束的引号
         advance(lexer);
+        return make_token(lexer, TOKEN_STRING);
     }
-
-    if (is_at_end(lexer)) {
-        return error_token(lexer, "Unterminated string.");
-    }
-
-    // 结束的引号
-    advance(lexer);
-    return make_token(lexer, TOKEN_STRING);
 }
 
 static ms_token_t number_token(ms_lexer_t* lexer) {

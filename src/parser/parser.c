@@ -143,6 +143,13 @@ static ms_local_t locals[256];
 static int local_count = 0;
 static int scope_depth = 0;
 
+// 循环控制
+static int loop_depth = 0;  // 当前循环嵌套深度
+static int break_jumps[256];  // break 跳转位置列表
+static int break_count = 0;
+static int continue_jumps[256];  // continue 跳转位置列表
+static int continue_count = 0;
+
 static void begin_scope() {
     scope_depth++;
 }
@@ -494,10 +501,20 @@ static void number(ms_parser_t* parser) {
 }
 
 static void string(ms_parser_t* parser) {
+    // 检查是否是三引号字符串
+    int quote_len = 1;  // 默认单引号
+    if (parser->previous.length >= 6 &&  // 至少 """..."""
+        parser->previous.start[0] == '"' &&
+        parser->previous.start[1] == '"' &&
+        parser->previous.start[2] == '"') {
+        quote_len = 3;  // 三引号
+    }
+    
     // 去掉引号
-    char* str = malloc(parser->previous.length - 1);
-    memcpy(str, parser->previous.start + 1, parser->previous.length - 2);
-    str[parser->previous.length - 2] = '\0';
+    int str_len = parser->previous.length - 2 * quote_len;
+    char* str = malloc(str_len + 1);
+    memcpy(str, parser->previous.start + quote_len, str_len);
+    str[str_len] = '\0';
     emit_constant(parser, ms_value_string(str));
     free(str);
 }
@@ -773,6 +790,7 @@ static void if_statement(ms_parser_t* parser) {
     emit_byte(parser, OP_POP);
     
     begin_scope();
+    skip_newlines(parser);  // 跳过空行
     consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
     
     while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
@@ -805,6 +823,7 @@ static void if_statement(ms_parser_t* parser) {
         emit_byte(parser, OP_POP);
         
         begin_scope();
+        skip_newlines(parser);  // 跳过空行
         consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
         
         while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
@@ -831,6 +850,7 @@ static void if_statement(ms_parser_t* parser) {
         consume(parser, TOKEN_NEWLINE, "Expect newline after ':'.");
         
         begin_scope();
+        skip_newlines(parser);  // 跳过空行
         consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
         
         while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
@@ -854,6 +874,14 @@ static void if_statement(ms_parser_t* parser) {
 static void while_statement(ms_parser_t* parser) {
     int loop_start = current_chunk(parser)->count;
     
+    // 进入循环，增加循环深度
+    loop_depth++;
+    int saved_break_count = break_count;
+    int saved_continue_count = continue_count;
+    // 不要重置计数器，而是从当前位置继续
+    // break_count = 0;
+    // continue_count = 0;
+    
     expression(parser);
     consume(parser, TOKEN_COLON, "Expect ':' after while condition.");
     consume(parser, TOKEN_NEWLINE, "Expect newline after ':'.");
@@ -862,6 +890,7 @@ static void while_statement(ms_parser_t* parser) {
     emit_byte(parser, OP_POP);
     
     begin_scope();
+    skip_newlines(parser);  // 跳过空行
     consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
     
     while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
@@ -875,14 +904,37 @@ static void while_statement(ms_parser_t* parser) {
     }
     end_scope(parser);
     
+    // patch 当前循环的 continue 跳转到循环开始
+    for (int i = saved_continue_count; i < continue_count; i++) {
+        patch_jump(parser, continue_jumps[i]);
+    }
+    
     emit_loop(parser, loop_start);
     
     patch_jump(parser, exit_jump);
     emit_byte(parser, OP_POP);
+    
+    // patch 当前循环的 break 跳转到循环结束
+    for (int i = saved_break_count; i < break_count; i++) {
+        patch_jump(parser, break_jumps[i]);
+    }
+    
+    // 恢复循环深度和计数器
+    loop_depth--;
+    break_count = saved_break_count;
+    continue_count = saved_continue_count;
 }
 
 static void for_statement(ms_parser_t* parser) {
     begin_scope();
+    
+    // 进入循环，增加循环深度
+    loop_depth++;
+    int saved_break_count = break_count;
+    int saved_continue_count = continue_count;
+    // 不要重置计数器，而是从当前位置继续
+    // break_count = 0;
+    // continue_count = 0;
     
     // for var in iterable:
     consume(parser, TOKEN_IDENTIFIER, "Expect variable name.");
@@ -912,6 +964,7 @@ static void for_statement(ms_parser_t* parser) {
     
     consume(parser, TOKEN_COLON, "Expect ':' after for clause.");
     consume(parser, TOKEN_NEWLINE, "Expect newline after ':'.");
+    skip_newlines(parser);  // 跳过空行
     consume(parser, TOKEN_INDENT, "Expect indent after for:");
     
     // Loop start
@@ -938,12 +991,27 @@ static void for_statement(ms_parser_t* parser) {
         consume(parser, TOKEN_DEDENT, "Expect dedent after for block.");
     }
     
+    // patch 当前循环的 continue 跳转到循环开始
+    for (int i = saved_continue_count; i < continue_count; i++) {
+        patch_jump(parser, continue_jumps[i]);
+    }
+    
     // Loop back
     emit_loop(parser, loop_start);
     
     // Patch exit jump
     patch_jump(parser, exit_jump);
     emit_byte(parser, OP_POP);  // Pop the boolean result
+    
+    // patch 当前循环的 break 跳转到循环结束
+    for (int i = saved_break_count; i < break_count; i++) {
+        patch_jump(parser, break_jumps[i]);
+    }
+    
+    // 恢复循环深度和计数器
+    loop_depth--;
+    break_count = saved_break_count;
+    continue_count = saved_continue_count;
     
     end_scope(parser);
 }
@@ -964,6 +1032,7 @@ static void with_statement(ms_parser_t* parser) {
     emit_bytes(parser, OP_DEFINE_GLOBAL, var_index);
     
     begin_scope();
+    skip_newlines(parser);  // 跳过空行
     consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
     
     while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
@@ -1067,6 +1136,46 @@ static void statement(ms_parser_t* parser) {
         for_statement(parser);
     } else if (match(parser, TOKEN_WITH)) {
         with_statement(parser);
+    } else if (match(parser, TOKEN_BREAK)) {
+        // break 语句
+        if (loop_depth == 0) {
+            error(parser, "'break' outside loop.");
+            return;
+        }
+        
+        // 记录 break 跳转位置
+        if (break_count >= 256) {
+            error(parser, "Too many break statements.");
+            return;
+        }
+        break_jumps[break_count++] = emit_jump(parser, OP_JUMP);
+        
+        // 消费换行符
+        if (match(parser, TOKEN_NEWLINE)) {
+            // 换行符已消费
+        } else if (!check(parser, TOKEN_EOF) && !check(parser, TOKEN_DEDENT)) {
+            error(parser, "Expect newline after 'break'.");
+        }
+    } else if (match(parser, TOKEN_CONTINUE)) {
+        // continue 语句
+        if (loop_depth == 0) {
+            error(parser, "'continue' outside loop.");
+            return;
+        }
+        
+        // 记录 continue 跳转位置
+        if (continue_count >= 256) {
+            error(parser, "Too many continue statements.");
+            return;
+        }
+        continue_jumps[continue_count++] = emit_jump(parser, OP_JUMP);
+        
+        // 消费换行符
+        if (match(parser, TOKEN_NEWLINE)) {
+            // 换行符已消费
+        } else if (!check(parser, TOKEN_EOF) && !check(parser, TOKEN_DEDENT)) {
+            error(parser, "Expect newline after 'continue'.");
+        }
     } else if (match(parser, TOKEN_PASS)) {
         // 消费语句后的换行符（如果有）
         if (match(parser, TOKEN_NEWLINE)) {
@@ -1121,7 +1230,10 @@ static void function_declaration(ms_parser_t* parser) {
     consume(parser, TOKEN_COLON, "Expect ':' after function signature.");
     consume(parser, TOKEN_NEWLINE, "Expect newline after ':'.");
     
-    // 创建函数的chunk
+    // 跳过函数体开始前的空行
+    skip_newlines(parser);
+    
+    consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
     ms_chunk_t* function_chunk = create_function_chunk(parser);
     if (function_chunk == NULL) {
         error(parser, "Too many functions.");
@@ -1148,8 +1260,6 @@ static void function_declaration(ms_parser_t* parser) {
         add_local(parser, params[i]);
         mark_initialized();
     }
-    
-    consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
     
     while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
         skip_newlines(parser);

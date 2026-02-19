@@ -1,6 +1,8 @@
 #!/usr/bin/env miniscript
-# MiniScript Python 3 语法演示
-# 展示已实现的 Python 3 核心功能
+"""
+MiniScript Python 3 语法演示
+展示已实现的 Python 3 核心功能
+"""
 
 print("==================================================")
 print("MiniScript - Python 3 语法演示")
@@ -93,11 +95,11 @@ print()
 print("【8. 函数定义】")
 
 def add(x, y):
-    # 两数相加
+    """两数相加"""
     return x + y
 
 def multiply(x, y):
-    # 两数相乘
+    """两数相乘"""
     return x * y
 
 print(f"add(10, 20) = {add(10, 20)}")
@@ -108,13 +110,13 @@ print()
 print("【9. 递归函数】")
 
 def factorial(n):
-    # 计算阶乘
+    """计算阶乘"""
     if n <= 1:
         return 1
     return n * factorial(n - 1)
 
 def fibonacci(n):
-    # 计算斐波那契数
+    """计算斐波那契数"""
     if n <= 1:
         return n
     return fibonacci(n - 1) + fibonacci(n - 2)

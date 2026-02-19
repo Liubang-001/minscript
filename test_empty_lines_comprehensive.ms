@@ -50,3 +50,25 @@ def test_for():
 test_for()
 
 print("All tests passed!")
+
+
+
+
+# ==================== 1. 基础语法 ====================
+def basic_syntax():
+
+    # 变量赋值
+    a = 10          # 整数
+    b = 3.14        # 浮点数
+    c = "Hello"     # 字符串
+    d = True        # 布尔值
+    e = None        # 空值
+
+    # 运算符
+    sum_ab = a + b
+    power = a ** 2          # 乘方
+    floor_div = a // 3      # 整除
+    remainder = a % 3       # 取余
+    is_equal = (a == 10)    # 比较
+
+basic_syntax()
