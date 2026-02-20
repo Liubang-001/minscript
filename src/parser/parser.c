@@ -633,8 +633,15 @@ static void attribute(ms_parser_t* parser) {
     ms_token_t attr_name = parser->previous;
     uint8_t attr_index = add_name(attr_name.start, attr_name.length);
     
-    // Store the attribute name as a constant for later use
-    emit_bytes(parser, OP_GET_PROPERTY, attr_index);
+    // 检查是否是属性赋值
+    if (match(parser, TOKEN_EQUAL)) {
+        // 属性赋值: obj.attr = value
+        expression(parser);  // 解析右侧的值
+        emit_bytes(parser, OP_SET_PROPERTY, attr_index);
+    } else {
+        // 属性访问: obj.attr
+        emit_bytes(parser, OP_GET_PROPERTY, attr_index);
+    }
 }
 
 // 全局变量名表（简化实现）
@@ -862,6 +869,89 @@ static void or_(ms_parser_t* parser) {
     patch_jump(parser, end_jump);
 }
 
+// Parse lambda expression: lambda x, y: x + y
+static void lambda_expression(ms_parser_t* parser) {
+    // Create a new function chunk for the lambda
+    ms_chunk_t* lambda_chunk = create_function_chunk(parser);
+    if (lambda_chunk == NULL) {
+        error(parser, "Too many nested functions.");
+        return;
+    }
+    
+    // Save current compilation state
+    ms_chunk_t* enclosing_chunk = parser->compiling_chunk;
+    int enclosing_local_count = local_count;
+    int enclosing_scope_depth = scope_depth;
+    
+    // Set up lambda compilation
+    parser->compiling_chunk = lambda_chunk;
+    local_count = 0;
+    scope_depth = 0;
+    begin_scope();
+    
+    // Parse parameters
+    int arity = 0;
+    if (!check(parser, TOKEN_COLON)) {
+        do {
+            if (arity >= 255) {
+                error(parser, "Can't have more than 255 parameters.");
+                break;
+            }
+            
+            consume(parser, TOKEN_IDENTIFIER, "Expect parameter name.");
+            
+            // Add parameter as local variable
+            add_local(parser, parser->previous);
+            mark_initialized();
+            arity++;
+            
+        } while (match(parser, TOKEN_COMMA));
+    }
+    
+    consume(parser, TOKEN_COLON, "Expect ':' after lambda parameters.");
+    
+    // Parse lambda body (single expression)
+    expression(parser);
+    
+    // Emit return
+    emit_byte(parser, OP_RETURN);
+    
+    // End lambda compilation
+    end_scope(parser);
+    
+    // Restore compilation state
+    parser->compiling_chunk = enclosing_chunk;
+    local_count = enclosing_local_count;
+    scope_depth = enclosing_scope_depth;
+    
+    // Create function object
+    ms_function_t* function = malloc(sizeof(ms_function_t));
+    function->chunk = lambda_chunk;
+    function->arity = arity;
+    function->name = strdup("<lambda>");
+    
+    // Emit lambda instruction with function constant
+    emit_constant(parser, ms_value_function((struct ms_function*)function));
+}
+
+static void walrus(ms_parser_t* parser) {
+    // 海象运算符 := (infix)
+    // 左侧应该是标识符，已经被 identifier() 处理并加载到栈上
+    // 我们需要：
+    // 1. 弹出左侧加载的值
+    // 2. 解析右侧表达式
+    // 3. 复制右侧的值
+    // 4. 赋值给左侧的变量
+    // 5. 保留一个值在栈上作为表达式的结果
+    
+    // 但是我们已经失去了左侧标识符的信息
+    // 需要在 identifier 函数中特殊处理
+    // 简化实现：暂时跳过完整的 walrus 实现
+    // 用户需要使用 (name := value) 的形式
+    
+    error(parser, "Walrus operator := not fully implemented yet.");
+}
+
 ms_parse_rule_t rules[] = {
     [TOKEN_LEFT_PAREN]    = {grouping, call,      PREC_CALL},
     [TOKEN_RIGHT_PAREN]   = {NULL,     NULL,      PREC_NONE},
@@ -887,6 +977,7 @@ ms_parse_rule_t rules[] = {
     [TOKEN_GREATER_EQUAL] = {NULL,     binary,    PREC_COMPARISON},
     [TOKEN_LESS]          = {NULL,     binary,    PREC_COMPARISON},
     [TOKEN_LESS_EQUAL]    = {NULL,     binary,    PREC_COMPARISON},
+    [TOKEN_WALRUS]        = {NULL,     walrus,    PREC_WALRUS},
     [TOKEN_IDENTIFIER]    = {identifier, NULL,    PREC_NONE},
     [TOKEN_STRING]        = {string,   NULL,      PREC_NONE},
     [TOKEN_FSTRING]       = {fstring,  NULL,      PREC_NONE},
@@ -910,6 +1001,7 @@ ms_parse_rule_t rules[] = {
     [TOKEN_IN]            = {NULL,     NULL,      PREC_NONE},
     [TOKEN_NOT]           = {unary,    NULL,      PREC_NONE},
     [TOKEN_IS]            = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_LAMBDA]        = {lambda_expression, NULL, PREC_NONE},
     [TOKEN_ERROR]         = {NULL,     NULL,      PREC_NONE},
     [TOKEN_EOF]           = {NULL,     NULL,      PREC_NONE},
 };
@@ -1078,9 +1170,6 @@ static void while_statement(ms_parser_t* parser) {
     loop_depth++;
     int saved_break_count = break_count;
     int saved_continue_count = continue_count;
-    // 不要重置计数器，而是从当前位置继续
-    // break_count = 0;
-    // continue_count = 0;
     
     expression(parser);
     consume(parser, TOKEN_COLON, "Expect ':' after while condition.");
@@ -1114,7 +1203,29 @@ static void while_statement(ms_parser_t* parser) {
     patch_jump(parser, exit_jump);
     emit_byte(parser, OP_POP);
     
-    // patch 当前循环的 break 跳转到循环结束
+    // 处理 else 子句
+    if (match(parser, TOKEN_ELSE)) {
+        consume(parser, TOKEN_COLON, "Expect ':' after else.");
+        consume(parser, TOKEN_NEWLINE, "Expect newline after ':'.");
+        
+        // 正常结束会执行 else 块
+        begin_scope();
+        skip_newlines(parser);
+        consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
+        
+        while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
+            skip_newlines(parser);
+            if (check(parser, TOKEN_DEDENT) || check(parser, TOKEN_EOF)) break;
+            declaration(parser);
+        }
+        
+        if (!check(parser, TOKEN_EOF)) {
+            consume(parser, TOKEN_DEDENT, "Expect dedent after block.");
+        }
+        end_scope(parser);
+    }
+    
+    // break 跳转到这里（在 else 块之后，或者没有 else 时直接到这里）
     for (int i = saved_break_count; i < break_count; i++) {
         patch_jump(parser, break_jumps[i]);
     }
@@ -1203,7 +1314,29 @@ static void for_statement(ms_parser_t* parser) {
     patch_jump(parser, exit_jump);
     emit_byte(parser, OP_POP);  // Pop the boolean result
     
-    // patch 当前循环的 break 跳转到循环结束
+    // 处理 else 子句
+    if (match(parser, TOKEN_ELSE)) {
+        consume(parser, TOKEN_COLON, "Expect ':' after else.");
+        consume(parser, TOKEN_NEWLINE, "Expect newline after ':'.");
+        
+        // 正常结束会执行 else 块
+        begin_scope();
+        skip_newlines(parser);
+        consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
+        
+        while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
+            skip_newlines(parser);
+            if (check(parser, TOKEN_DEDENT) || check(parser, TOKEN_EOF)) break;
+            declaration(parser);
+        }
+        
+        if (!check(parser, TOKEN_EOF)) {
+            consume(parser, TOKEN_DEDENT, "Expect dedent after block.");
+        }
+        end_scope(parser);
+    }
+    
+    // break 跳转到这里（在 else 块之后，或者没有 else 时直接到这里）
     for (int i = saved_break_count; i < break_count; i++) {
         patch_jump(parser, break_jumps[i]);
     }
@@ -1465,6 +1598,25 @@ static void statement(ms_parser_t* parser) {
         } else if (!check(parser, TOKEN_EOF) && !check(parser, TOKEN_DEDENT)) {
             error(parser, "Expect newline after 'pass'.");
         }
+    } else if (match(parser, TOKEN_ASSERT)) {
+        // assert 语句: assert condition [, message]
+        expression(parser);  // 解析条件表达式
+        
+        // 检查是否有可选的错误消息
+        if (match(parser, TOKEN_COMMA)) {
+            expression(parser);  // 解析错误消息
+            emit_byte(parser, OP_ASSERT);  // 带消息的 assert
+        } else {
+            emit_byte(parser, OP_NIL);  // 没有消息，推送 nil
+            emit_byte(parser, OP_ASSERT);
+        }
+        
+        // 消费语句后的换行符
+        if (match(parser, TOKEN_NEWLINE)) {
+            // 换行符已消费
+        } else if (!check(parser, TOKEN_EOF) && !check(parser, TOKEN_DEDENT)) {
+            error(parser, "Expect newline after 'assert'.");
+        }
     } else if (match(parser, TOKEN_RETURN)) {
         // return 语句
         if (check(parser, TOKEN_NEWLINE) || check(parser, TOKEN_EOF) || check(parser, TOKEN_DEDENT)) {
@@ -1487,15 +1639,204 @@ static void statement(ms_parser_t* parser) {
     }
 }
 
+static void class_declaration(ms_parser_t* parser) {
+    // class ClassName:
+    //     def __init__(self, ...):
+    //         ...
+    //     def method(self, ...):
+    //         ...
+    
+    consume(parser, TOKEN_IDENTIFIER, "Expect class name.");
+    uint8_t name_constant = add_name(parser->previous.start, parser->previous.length);
+    ms_token_t class_name = parser->previous;
+    
+    // 创建类对象
+    emit_bytes(parser, OP_CLASS, name_constant);
+    define_variable(parser, name_constant);
+    
+    // 检查是否有父类
+    if (match(parser, TOKEN_LEFT_PAREN)) {
+        consume(parser, TOKEN_IDENTIFIER, "Expect superclass name.");
+        
+        // 加载父类
+        ms_token_t superclass_name = parser->previous;
+        uint8_t superclass_index = add_name(superclass_name.start, superclass_name.length);
+        emit_bytes(parser, OP_GET_GLOBAL, superclass_index);
+        
+        // 加载子类
+        emit_bytes(parser, OP_GET_GLOBAL, name_constant);
+        
+        consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after superclass.");
+        
+        // 设置继承关系 (栈: [superclass, subclass])
+        emit_byte(parser, OP_INHERIT);
+    }
+    
+    consume(parser, TOKEN_COLON, "Expect ':' after class name.");
+    consume(parser, TOKEN_NEWLINE, "Expect newline after ':'.");
+    skip_newlines(parser);
+    consume(parser, TOKEN_INDENT, "Expect indentation after class declaration.");
+    
+    // 加载类到栈顶（用于添加方法）
+    uint8_t get_op = OP_GET_GLOBAL;
+    uint8_t arg = name_constant;
+    emit_bytes(parser, get_op, arg);
+    
+    // 解析方法
+    while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
+        skip_newlines(parser);
+        if (check(parser, TOKEN_DEDENT) || check(parser, TOKEN_EOF)) break;
+        
+        if (match(parser, TOKEN_DEF)) {
+            // 解析方法
+            consume(parser, TOKEN_IDENTIFIER, "Expect method name.");
+            uint8_t method_constant = add_name(parser->previous.start, parser->previous.length);
+            
+            consume(parser, TOKEN_LEFT_PAREN, "Expect '(' after method name.");
+            
+            // 解析参数（第一个参数应该是 self）
+            int param_count = 0;
+            ms_token_t params[255];
+            ms_value_t defaults[255];
+            int default_count = 0;
+            bool has_default = false;
+            
+            if (!check(parser, TOKEN_RIGHT_PAREN)) {
+                do {
+                    if (param_count >= 255) {
+                        error(parser, "Can't have more than 255 parameters.");
+                    }
+                    
+                    consume(parser, TOKEN_IDENTIFIER, "Expect parameter name.");
+                    params[param_count] = parser->previous;
+                    
+                    // 检查是否有默认值
+                    if (match(parser, TOKEN_EQUAL)) {
+                        has_default = true;
+                        expression(parser);
+                        defaults[default_count] = parser->compiling_chunk->constants[parser->compiling_chunk->constant_count - 1];
+                        default_count++;
+                        parser->compiling_chunk->constant_count--;
+                    } else {
+                        if (has_default) {
+                            error(parser, "Non-default parameter follows default parameter.");
+                        }
+                    }
+                    
+                    param_count++;
+                } while (match(parser, TOKEN_COMMA));
+            }
+            
+            consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after parameters.");
+            consume(parser, TOKEN_COLON, "Expect ':' after method signature.");
+            consume(parser, TOKEN_NEWLINE, "Expect newline after ':'.");
+            skip_newlines(parser);
+            consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
+            
+            // 创建方法的 chunk
+            ms_chunk_t* method_chunk = create_function_chunk(parser);
+            if (method_chunk == NULL) {
+                error(parser, "Too many functions.");
+                return;
+            }
+            
+            // 保存当前状态
+            ms_chunk_t* prev_chunk = parser->compiling_chunk;
+            parser->compiling_chunk = method_chunk;
+            
+            ms_local_t saved_locals[256];
+            int saved_local_count = local_count;
+            int saved_scope_depth = scope_depth;
+            memcpy(saved_locals, locals, sizeof(locals));
+            local_count = 0;
+            scope_depth = 0;
+            
+            // 编译方法体
+            begin_scope();
+            
+            // 添加参数作为局部变量
+            for (int i = 0; i < param_count; i++) {
+                add_local(parser, params[i]);
+                mark_initialized();
+            }
+            
+            while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
+                skip_newlines(parser);
+                if (check(parser, TOKEN_DEDENT) || check(parser, TOKEN_EOF)) break;
+                declaration(parser);
+            }
+            
+            if (!check(parser, TOKEN_EOF)) {
+                consume(parser, TOKEN_DEDENT, "Expect dedent after method body.");
+            }
+            
+            // 添加默认返回值
+            emit_byte(parser, OP_NIL);
+            emit_byte(parser, OP_RETURN);
+            
+            end_scope(parser);
+            
+            // 恢复状态
+            parser->compiling_chunk = prev_chunk;
+            local_count = saved_local_count;
+            scope_depth = saved_scope_depth;
+            memcpy(locals, saved_locals, sizeof(locals));
+            
+            // 创建方法函数对象
+            ms_function_t* method = malloc(sizeof(ms_function_t));
+            method->chunk = method_chunk;
+            method->arity = param_count;
+            method->name = malloc(name_table_names[method_constant] ? strlen(name_table_names[method_constant]) + 1 : 1);
+            if (name_table_names[method_constant]) {
+                strcpy(method->name, name_table_names[method_constant]);
+            } else {
+                method->name[0] = '\0';
+            }
+            
+            method->default_count = default_count;
+            if (default_count > 0) {
+                method->defaults = malloc(sizeof(ms_value_t) * default_count);
+                memcpy(method->defaults, defaults, sizeof(ms_value_t) * default_count);
+            } else {
+                method->defaults = NULL;
+            }
+            
+            ms_value_t method_value;
+            method_value.type = MS_VAL_FUNCTION;
+            method_value.as.function = method;
+            
+            uint8_t method_const = make_constant(parser, method_value);
+            emit_bytes(parser, OP_CONSTANT, method_const);
+            
+            // 添加方法到类
+            emit_bytes(parser, OP_METHOD, method_constant);
+        } else {
+            error(parser, "Expect method definition in class body.");
+            break;
+        }
+    }
+    
+    if (!check(parser, TOKEN_EOF)) {
+        consume(parser, TOKEN_DEDENT, "Expect dedent after class body.");
+    }
+    
+    // 弹出类
+    emit_byte(parser, OP_POP);
+}
+
 static void function_declaration(ms_parser_t* parser) {
     // def name(params):
     uint8_t name_index = parse_variable(parser, "Expect function name.");
     
     consume(parser, TOKEN_LEFT_PAREN, "Expect '(' after function name.");
     
-    // 解析参数
+    // 解析参数和默认值
     int param_count = 0;
     ms_token_t params[255];
+    ms_value_t defaults[255];
+    int default_count = 0;
+    bool has_default = false;
+    
     if (!check(parser, TOKEN_RIGHT_PAREN)) {
         do {
             if (param_count >= 255) {
@@ -1504,6 +1845,23 @@ static void function_declaration(ms_parser_t* parser) {
             
             consume(parser, TOKEN_IDENTIFIER, "Expect parameter name.");
             params[param_count] = parser->previous;
+            
+            // 检查是否有默认值
+            if (match(parser, TOKEN_EQUAL)) {
+                has_default = true;
+                // 解析默认值表达式
+                expression(parser);
+                // 获取栈顶的值作为默认值
+                defaults[default_count] = parser->compiling_chunk->constants[parser->compiling_chunk->constant_count - 1];
+                default_count++;
+                // 移除刚添加的常量（我们会在函数对象中存储）
+                parser->compiling_chunk->constant_count--;
+            } else {
+                if (has_default) {
+                    error(parser, "Non-default parameter follows default parameter.");
+                }
+            }
+            
             param_count++;
         } while (match(parser, TOKEN_COMMA));
     }
@@ -1576,6 +1934,15 @@ static void function_declaration(ms_parser_t* parser) {
         function->name[0] = '\0';
     }
     
+    // 存储默认值
+    function->default_count = default_count;
+    if (default_count > 0) {
+        function->defaults = malloc(sizeof(ms_value_t) * default_count);
+        memcpy(function->defaults, defaults, sizeof(ms_value_t) * default_count);
+    } else {
+        function->defaults = NULL;
+    }
+    
     ms_value_t func_value;
     func_value.type = MS_VAL_FUNCTION;
     func_value.as.function = function;
@@ -1591,10 +1958,36 @@ static void function_declaration(ms_parser_t* parser) {
 static void declaration(ms_parser_t* parser) {
     if (match(parser, TOKEN_VAR)) {
         var_declaration(parser);
+    } else if (match(parser, TOKEN_CLASS)) {
+        class_declaration(parser);
     } else if (match(parser, TOKEN_DEF)) {
         function_declaration(parser);
     } else if (match(parser, TOKEN_IMPORT) || check(parser, TOKEN_FROM)) {
         import_statement(parser);
+    } else if (match(parser, TOKEN_DEL)) {
+        // del 语句: del variable
+        if (!match(parser, TOKEN_IDENTIFIER)) {
+            error(parser, "Expect variable name after 'del'.");
+            return;
+        }
+        
+        ms_token_t name = parser->previous;
+        uint8_t name_index = add_name(name.start, name.length);
+        
+        int arg = resolve_local(parser, &name);
+        if (arg != -1) {
+            error(parser, "Cannot delete local variable.");
+            return;
+        }
+        
+        emit_bytes(parser, OP_DELETE, name_index);
+        
+        // 消费语句后的换行符
+        if (match(parser, TOKEN_NEWLINE)) {
+            // 换行符已消费
+        } else if (!check(parser, TOKEN_EOF) && !check(parser, TOKEN_DEDENT)) {
+            error(parser, "Expect newline after 'del'.");
+        }
     } else {
         statement(parser);
     }

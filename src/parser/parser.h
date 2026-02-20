@@ -19,6 +19,7 @@ typedef struct {
 // 优先级
 typedef enum {
     PREC_NONE,
+    PREC_WALRUS,      // :=
     PREC_ASSIGNMENT,  // =
     PREC_TERNARY,     // if-else (ternary)
     PREC_OR,          // or

@@ -1,5 +1,6 @@
 #include "vm.h"
 #include "../ext/ext.h"
+#include "../core/class.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -120,6 +121,7 @@ static ms_result_t run(ms_vm_t* vm) {
 #define READ_CONSTANT() (vm->chunk->constants[READ_BYTE()])
 #define READ_SHORT() \
     (frame->ip += 2, (uint16_t)((frame->ip[-2] << 8) | frame->ip[-1]))
+#define READ_STRING() (name_table_names[READ_BYTE()])
 
 #define BINARY_OP(value_type, op) \
     do { \
@@ -226,14 +228,202 @@ static ms_result_t run(ms_vm_t* vm) {
             case OP_EQUAL: {
                 ms_value_t b = ms_vm_pop(vm);
                 ms_value_t a = ms_vm_pop(vm);
+                
+                // 检查是否是实例对象，如果是则尝试调用 __eq__ 方法
+                if (ms_value_is_instance(a)) {
+                    ms_instance_t* instance = (ms_instance_t*)ms_value_as_instance(a);
+                    
+                    if (ms_dict_has(instance->klass->methods, "__eq__")) {
+                        ms_value_t eq_method = ms_dict_get(instance->klass->methods, "__eq__");
+                        
+                        if (eq_method.type == MS_VAL_FUNCTION) {
+                            ms_function_t* function = eq_method.as.function;
+                            
+                            // 调用 __eq__(self, other)
+                            ms_vm_push(vm, a);
+                            ms_vm_push(vm, b);
+                            
+                            if (vm->frame_count >= 64) {
+                                runtime_error(vm, "Stack overflow.");
+                                return MS_RESULT_RUNTIME_ERROR;
+                            }
+                            
+                            ms_value_t* call_stack_base = vm->stack_top - 2;
+                            ms_call_frame_t* new_frame = &vm->frames[vm->frame_count++];
+                            new_frame->ip = function->chunk->code;
+                            new_frame->slots = vm->stack_top - 2;
+                            
+                            ms_chunk_t* prev_chunk = vm->chunk;
+                            vm->chunk = function->chunk;
+                            
+                            ms_result_t result = run(vm);
+                            
+                            vm->chunk = prev_chunk;
+                            vm->frame_count--;
+                            
+                            if (result != MS_RESULT_OK) {
+                                return result;
+                            }
+                            
+                            // 获取返回值
+                            ms_value_t return_value = ms_vm_pop(vm);
+                            vm->stack_top = call_stack_base;
+                            ms_vm_push(vm, return_value);
+                            break;
+                        }
+                    }
+                }
+                
                 ms_vm_push(vm, ms_value_bool(values_equal(a, b)));
                 break;
             }
-            case OP_GREATER: BINARY_OP(ms_value_bool, >); break;
-            case OP_LESS: BINARY_OP(ms_value_bool, <); break;
+            case OP_GREATER: {
+                ms_value_t b = peek(vm, 0);
+                ms_value_t a = peek(vm, 1);
+                
+                // 检查是否是实例对象，如果是则尝试调用 __gt__ 方法
+                if (ms_value_is_instance(a)) {
+                    ms_instance_t* instance = (ms_instance_t*)ms_value_as_instance(a);
+                    
+                    if (ms_dict_has(instance->klass->methods, "__gt__")) {
+                        ms_value_t gt_method = ms_dict_get(instance->klass->methods, "__gt__");
+                        
+                        if (gt_method.type == MS_VAL_FUNCTION) {
+                            ms_function_t* function = gt_method.as.function;
+                            
+                            // 创建调用帧
+                            if (vm->frame_count >= 64) {
+                                runtime_error(vm, "Stack overflow.");
+                                return MS_RESULT_RUNTIME_ERROR;
+                            }
+                            
+                            ms_value_t* call_stack_base = vm->stack_top - function->arity;
+                            ms_call_frame_t* new_frame = &vm->frames[vm->frame_count++];
+                            new_frame->ip = function->chunk->code;
+                            new_frame->slots = vm->stack_top - function->arity;
+                            
+                            ms_chunk_t* prev_chunk = vm->chunk;
+                            vm->chunk = function->chunk;
+                            
+                            ms_result_t result = run(vm);
+                            
+                            vm->chunk = prev_chunk;
+                            vm->frame_count--;
+                            
+                            if (result != MS_RESULT_OK) {
+                                return result;
+                            }
+                            
+                            ms_value_t return_value = ms_vm_pop(vm);
+                            vm->stack_top = call_stack_base;
+                            ms_vm_push(vm, return_value);
+                            
+                            frame = &vm->frames[vm->frame_count - 1];
+                            break;
+                        }
+                    }
+                }
+                
+                BINARY_OP(ms_value_bool, >);
+                break;
+            }
+            case OP_LESS: {
+                ms_value_t b = peek(vm, 0);
+                ms_value_t a = peek(vm, 1);
+                
+                // 检查是否是实例对象，如果是则尝试调用 __lt__ 方法
+                if (ms_value_is_instance(a)) {
+                    ms_instance_t* instance = (ms_instance_t*)ms_value_as_instance(a);
+                    
+                    if (ms_dict_has(instance->klass->methods, "__lt__")) {
+                        ms_value_t lt_method = ms_dict_get(instance->klass->methods, "__lt__");
+                        
+                        if (lt_method.type == MS_VAL_FUNCTION) {
+                            ms_function_t* function = lt_method.as.function;
+                            
+                            // 创建调用帧
+                            if (vm->frame_count >= 64) {
+                                runtime_error(vm, "Stack overflow.");
+                                return MS_RESULT_RUNTIME_ERROR;
+                            }
+                            
+                            ms_value_t* call_stack_base = vm->stack_top - function->arity;
+                            ms_call_frame_t* new_frame = &vm->frames[vm->frame_count++];
+                            new_frame->ip = function->chunk->code;
+                            new_frame->slots = vm->stack_top - function->arity;
+                            
+                            ms_chunk_t* prev_chunk = vm->chunk;
+                            vm->chunk = function->chunk;
+                            
+                            ms_result_t result = run(vm);
+                            
+                            vm->chunk = prev_chunk;
+                            vm->frame_count--;
+                            
+                            if (result != MS_RESULT_OK) {
+                                return result;
+                            }
+                            
+                            ms_value_t return_value = ms_vm_pop(vm);
+                            vm->stack_top = call_stack_base;
+                            ms_vm_push(vm, return_value);
+                            
+                            frame = &vm->frames[vm->frame_count - 1];
+                            break;
+                        }
+                    }
+                }
+                
+                BINARY_OP(ms_value_bool, <);
+                break;
+            }
             case OP_ADD: {
                 ms_value_t b = peek(vm, 0);
                 ms_value_t a = peek(vm, 1);
+                
+                // 检查是否是实例对象，如果是则尝试调用 __add__ 方法
+                if (ms_value_is_instance(a)) {
+                    ms_instance_t* instance = (ms_instance_t*)ms_value_as_instance(a);
+                    
+                    if (ms_dict_has(instance->klass->methods, "__add__")) {
+                        ms_value_t add_method = ms_dict_get(instance->klass->methods, "__add__");
+                        
+                        if (add_method.type == MS_VAL_FUNCTION) {
+                            ms_function_t* function = add_method.as.function;
+                            
+                            // 调用 __add__(self, other)
+                            // 栈上已经有 [a, b]，正好是我们需要的
+                            
+                            if (vm->frame_count >= 64) {
+                                runtime_error(vm, "Stack overflow.");
+                                return MS_RESULT_RUNTIME_ERROR;
+                            }
+                            
+                            ms_value_t* call_stack_base = vm->stack_top - 2;
+                            ms_call_frame_t* new_frame = &vm->frames[vm->frame_count++];
+                            new_frame->ip = function->chunk->code;
+                            new_frame->slots = vm->stack_top - 2;
+                            
+                            ms_chunk_t* prev_chunk = vm->chunk;
+                            vm->chunk = function->chunk;
+                            
+                            ms_result_t result = run(vm);
+                            
+                            vm->chunk = prev_chunk;
+                            vm->frame_count--;
+                            
+                            if (result != MS_RESULT_OK) {
+                                return result;
+                            }
+                            
+                            // 获取返回值
+                            ms_value_t return_value = ms_vm_pop(vm);
+                            vm->stack_top = call_stack_base;
+                            ms_vm_push(vm, return_value);
+                            break;
+                        }
+                    }
+                }
                 
                 // If either operand is a string, convert both to strings and concatenate
                 if (ms_value_is_string(a) || ms_value_is_string(b)) {
@@ -288,9 +478,173 @@ static ms_result_t run(ms_vm_t* vm) {
                 }
                 break;
             }
-            case OP_SUBTRACT: BINARY_OP(ms_value_int, -); break;
-            case OP_MULTIPLY: BINARY_OP(ms_value_int, *); break;
-            case OP_DIVIDE: BINARY_OP(ms_value_int, /); break;
+            case OP_SUBTRACT: {
+                ms_value_t b = peek(vm, 0);
+                ms_value_t a = peek(vm, 1);
+                
+                // 检查是否是实例对象，如果是则尝试调用 __sub__ 方法
+                if (ms_value_is_instance(a)) {
+                    ms_instance_t* instance = (ms_instance_t*)ms_value_as_instance(a);
+                    
+                    if (ms_dict_has(instance->klass->methods, "__sub__")) {
+                        ms_value_t sub_method = ms_dict_get(instance->klass->methods, "__sub__");
+                        
+                        if (sub_method.type == MS_VAL_FUNCTION) {
+                            ms_function_t* function = sub_method.as.function;
+                            
+                            // 调用 __sub__(self, other)
+                            // 栈上已经有 [a, b]，正好是我们需要的
+                            
+                            // 创建调用帧
+                            if (vm->frame_count >= 64) {
+                                runtime_error(vm, "Stack overflow.");
+                                return MS_RESULT_RUNTIME_ERROR;
+                            }
+                            
+                            ms_value_t* call_stack_base = vm->stack_top - function->arity;
+                            ms_call_frame_t* new_frame = &vm->frames[vm->frame_count++];
+                            new_frame->ip = function->chunk->code;
+                            new_frame->slots = vm->stack_top - function->arity;
+                            
+                            ms_chunk_t* prev_chunk = vm->chunk;
+                            vm->chunk = function->chunk;
+                            
+                            ms_result_t result = run(vm);
+                            
+                            vm->chunk = prev_chunk;
+                            vm->frame_count--;
+                            
+                            if (result != MS_RESULT_OK) {
+                                return result;
+                            }
+                            
+                            // 获取返回值
+                            ms_value_t return_value = ms_vm_pop(vm);
+                            vm->stack_top = call_stack_base;
+                            ms_vm_push(vm, return_value);
+                            
+                            // 重新获取frame指针
+                            frame = &vm->frames[vm->frame_count - 1];
+                            break;
+                        }
+                    }
+                }
+                
+                BINARY_OP(ms_value_int, -);
+                break;
+            }
+            case OP_MULTIPLY: {
+                ms_value_t b = peek(vm, 0);
+                ms_value_t a = peek(vm, 1);
+                
+                // 检查是否是实例对象，如果是则尝试调用 __mul__ 方法
+                if (ms_value_is_instance(a)) {
+                    ms_instance_t* instance = (ms_instance_t*)ms_value_as_instance(a);
+                    
+                    if (ms_dict_has(instance->klass->methods, "__mul__")) {
+                        ms_value_t mul_method = ms_dict_get(instance->klass->methods, "__mul__");
+                        
+                        if (mul_method.type == MS_VAL_FUNCTION) {
+                            ms_function_t* function = mul_method.as.function;
+                            
+                            // 调用 __mul__(self, other)
+                            
+                            // 创建调用帧
+                            if (vm->frame_count >= 64) {
+                                runtime_error(vm, "Stack overflow.");
+                                return MS_RESULT_RUNTIME_ERROR;
+                            }
+                            
+                            ms_value_t* call_stack_base = vm->stack_top - function->arity;
+                            ms_call_frame_t* new_frame = &vm->frames[vm->frame_count++];
+                            new_frame->ip = function->chunk->code;
+                            new_frame->slots = vm->stack_top - function->arity;
+                            
+                            ms_chunk_t* prev_chunk = vm->chunk;
+                            vm->chunk = function->chunk;
+                            
+                            ms_result_t result = run(vm);
+                            
+                            vm->chunk = prev_chunk;
+                            vm->frame_count--;
+                            
+                            if (result != MS_RESULT_OK) {
+                                return result;
+                            }
+                            
+                            // 获取返回值
+                            ms_value_t return_value = ms_vm_pop(vm);
+                            vm->stack_top = call_stack_base;
+                            ms_vm_push(vm, return_value);
+                            
+                            // 重新获取frame指针
+                            frame = &vm->frames[vm->frame_count - 1];
+                            break;
+                        }
+                    }
+                }
+                
+                BINARY_OP(ms_value_int, *);
+                break;
+            }
+            case OP_DIVIDE: {
+                ms_value_t b = peek(vm, 0);
+                ms_value_t a = peek(vm, 1);
+                
+                // 检查是否是实例对象，如果是则尝试调用 __div__ 或 __truediv__ 方法
+                if (ms_value_is_instance(a)) {
+                    ms_instance_t* instance = (ms_instance_t*)ms_value_as_instance(a);
+                    
+                    // 优先尝试 __truediv__，然后是 __div__
+                    const char* method_name = ms_dict_has(instance->klass->methods, "__truediv__") ? 
+                                             "__truediv__" : "__div__";
+                    
+                    if (ms_dict_has(instance->klass->methods, method_name)) {
+                        ms_value_t div_method = ms_dict_get(instance->klass->methods, method_name);
+                        
+                        if (div_method.type == MS_VAL_FUNCTION) {
+                            ms_function_t* function = div_method.as.function;
+                            
+                            // 调用 __div__(self, other) 或 __truediv__(self, other)
+                            
+                            // 创建调用帧
+                            if (vm->frame_count >= 64) {
+                                runtime_error(vm, "Stack overflow.");
+                                return MS_RESULT_RUNTIME_ERROR;
+                            }
+                            
+                            ms_value_t* call_stack_base = vm->stack_top - function->arity;
+                            ms_call_frame_t* new_frame = &vm->frames[vm->frame_count++];
+                            new_frame->ip = function->chunk->code;
+                            new_frame->slots = vm->stack_top - function->arity;
+                            
+                            ms_chunk_t* prev_chunk = vm->chunk;
+                            vm->chunk = function->chunk;
+                            
+                            ms_result_t result = run(vm);
+                            
+                            vm->chunk = prev_chunk;
+                            vm->frame_count--;
+                            
+                            if (result != MS_RESULT_OK) {
+                                return result;
+                            }
+                            
+                            // 获取返回值
+                            ms_value_t return_value = ms_vm_pop(vm);
+                            vm->stack_top = call_stack_base;
+                            ms_vm_push(vm, return_value);
+                            
+                            // 重新获取frame指针
+                            frame = &vm->frames[vm->frame_count - 1];
+                            break;
+                        }
+                    }
+                }
+                
+                BINARY_OP(ms_value_int, /);
+                break;
+            }
             case OP_FLOOR_DIVIDE: {
                 ms_value_t b = peek(vm, 0);
                 ms_value_t a = peek(vm, 1);
@@ -363,6 +717,57 @@ static ms_result_t run(ms_vm_t* vm) {
             }
             case OP_PRINT: {
                 ms_value_t value = ms_vm_pop(vm);
+                
+                // 检查是否是实例对象，如果是则尝试调用 __str__ 方法
+                if (ms_value_is_instance(value)) {
+                    ms_instance_t* instance = (ms_instance_t*)ms_value_as_instance(value);
+                    
+                    // 查找 __str__ 方法
+                    if (ms_dict_has(instance->klass->methods, "__str__")) {
+                        ms_value_t str_method = ms_dict_get(instance->klass->methods, "__str__");
+                        
+                        if (str_method.type == MS_VAL_FUNCTION) {
+                            ms_function_t* function = str_method.as.function;
+                            
+                            // 调用 __str__(self)
+                            ms_vm_push(vm, value);  // self
+                            
+                            if (vm->frame_count >= 64) {
+                                runtime_error(vm, "Stack overflow.");
+                                return MS_RESULT_RUNTIME_ERROR;
+                            }
+                            
+                            ms_value_t* call_stack_base = vm->stack_top - 1;
+                            ms_call_frame_t* new_frame = &vm->frames[vm->frame_count++];
+                            new_frame->ip = function->chunk->code;
+                            new_frame->slots = vm->stack_top - 1;
+                            
+                            ms_chunk_t* prev_chunk = vm->chunk;
+                            vm->chunk = function->chunk;
+                            
+                            ms_result_t result = run(vm);
+                            
+                            vm->chunk = prev_chunk;
+                            vm->frame_count--;
+                            
+                            if (result != MS_RESULT_OK) {
+                                return result;
+                            }
+                            
+                            // 获取返回的字符串
+                            ms_value_t str_value = ms_vm_pop(vm);
+                            vm->stack_top = call_stack_base;
+                            
+                            if (ms_value_is_string(str_value)) {
+                                printf("%s\n", ms_value_as_string(str_value));
+                            } else {
+                                printf("<object>\n");
+                            }
+                            break;
+                        }
+                    }
+                }
+                
                 switch (value.type) {
                     case MS_VAL_BOOL:
                         printf(ms_value_as_bool(value) ? "True" : "False");
@@ -400,6 +805,159 @@ static ms_result_t run(ms_vm_t* vm) {
                 uint8_t arg_count = READ_BYTE();
                 ms_value_t func_val = peek(vm, arg_count);
                 
+                // 调试输出
+                // fprintf(stderr, "DEBUG OP_CALL: arg_count=%d, func_val.type=%d\n", arg_count, func_val.type);
+                
+                // 检查是否是绑定方法调用
+                if (ms_value_is_bound_method(func_val)) {
+                    ms_bound_method_t* bound = (ms_bound_method_t*)ms_value_as_bound_method(func_val);
+                    ms_value_t method = bound->method;
+                    ms_value_t receiver = bound->receiver;
+                    
+                    // 将 receiver (self) 插入到参数列表的开头
+                    // 栈布局: [bound_method, arg1, arg2, ...] -> [receiver, arg1, arg2, ...]
+                    vm->stack_top[-arg_count - 1] = receiver;
+                    
+                    // 调用方法
+                    if (method.type == MS_VAL_FUNCTION) {
+                        ms_function_t* function = method.as.function;
+                        
+                        // 检查参数数量（包括 self）
+                        int min_args = function->arity - function->default_count;
+                        int max_args = function->arity;
+                        int total_args = arg_count + 1;  // +1 for self
+                        
+                        if (total_args < min_args || total_args > max_args) {
+                            runtime_error(vm, "Expected %d to %d arguments but got %d.", 
+                                        min_args, max_args, total_args);
+                            return MS_RESULT_RUNTIME_ERROR;
+                        }
+                        
+                        // 填充默认参数
+                        int missing_args = function->arity - total_args;
+                        if (missing_args > 0) {
+                            int default_start = function->default_count - missing_args;
+                            for (int i = 0; i < missing_args; i++) {
+                                ms_vm_push(vm, function->defaults[default_start + i]);
+                            }
+                        }
+                        
+                        // 创建调用帧
+                        if (vm->frame_count >= 64) {
+                            runtime_error(vm, "Stack overflow.");
+                            return MS_RESULT_RUNTIME_ERROR;
+                        }
+                        
+                        // 注意：栈上现在是 [receiver, arg1, arg2, ...]，没有bound_method
+                        // 所以call_stack_base应该指向receiver之前的位置
+                        ms_value_t* call_stack_base = vm->stack_top - function->arity;
+                        ms_call_frame_t* new_frame = &vm->frames[vm->frame_count++];
+                        new_frame->ip = function->chunk->code;
+                        new_frame->slots = vm->stack_top - function->arity;
+                        
+                        ms_chunk_t* prev_chunk = vm->chunk;
+                        vm->chunk = function->chunk;
+                        
+                        ms_result_t result = run(vm);
+                        
+                        vm->chunk = prev_chunk;
+                        vm->frame_count--;
+                        
+                        if (result != MS_RESULT_OK) {
+                            return result;
+                        }
+                        
+                        // 函数返回值应该在栈上
+                        ms_value_t return_value = ms_vm_pop(vm);
+                        vm->stack_top = call_stack_base;
+                        ms_vm_push(vm, return_value);
+                        
+                        // 重新获取当前frame指针（递归调用后可能失效）
+                        frame = &vm->frames[vm->frame_count - 1];
+                    }
+                    break;
+                }
+                
+                // 检查是否是类实例化
+                if (ms_value_is_class(func_val)) {
+                    ms_class_t* klass = (ms_class_t*)ms_value_as_class(func_val);
+                    
+                    // 创建实例
+                    ms_instance_t* instance = ms_instance_new(klass);
+                    ms_value_t instance_val = ms_value_instance(instance);
+                    
+                    // 查找 __init__ 方法
+                    if (ms_dict_has(klass->methods, "__init__")) {
+                        ms_value_t init_method = ms_dict_get(klass->methods, "__init__");
+                        
+                        // 将实例作为第一个参数（self）
+                        // 栈布局: [class, arg1, arg2, ...] -> [instance, arg1, arg2, ...]
+                        vm->stack_top[-arg_count - 1] = instance_val;
+                        
+                        // 调用 __init__
+                        if (init_method.type == MS_VAL_FUNCTION) {
+                            ms_function_t* function = init_method.as.function;
+                            
+                            // 检查参数数量（包括 self）
+                            int min_args = function->arity - function->default_count;
+                            int max_args = function->arity;
+                            int total_args = arg_count + 1;  // +1 for self
+                            
+                            if (total_args < min_args || total_args > max_args) {
+                                runtime_error(vm, "__init__() takes %d to %d arguments but %d were given.", 
+                                            min_args, max_args, total_args);
+                                return MS_RESULT_RUNTIME_ERROR;
+                            }
+                            
+                            // 填充默认参数
+                            int missing_args = function->arity - total_args;
+                            if (missing_args > 0) {
+                                int default_start = function->default_count - missing_args;
+                                for (int i = 0; i < missing_args; i++) {
+                                    ms_vm_push(vm, function->defaults[default_start + i]);
+                                }
+                            }
+                            
+                            // 创建调用帧
+                            if (vm->frame_count >= 64) {
+                                runtime_error(vm, "Stack overflow.");
+                                return MS_RESULT_RUNTIME_ERROR;
+                            }
+                            
+                            // 注意：栈上现在是 [instance, arg1, arg2, ...]，没有class
+                            ms_value_t* call_stack_base = vm->stack_top - function->arity;
+                            ms_call_frame_t* new_frame = &vm->frames[vm->frame_count++];
+                            new_frame->ip = function->chunk->code;
+                            new_frame->slots = vm->stack_top - function->arity;
+                            
+                            ms_chunk_t* prev_chunk = vm->chunk;
+                            vm->chunk = function->chunk;
+                            
+                            ms_result_t result = run(vm);
+                            
+                            vm->chunk = prev_chunk;
+                            vm->frame_count--;
+                            
+                            if (result != MS_RESULT_OK) {
+                                return result;
+                            }
+                            
+                            // __init__ 返回 None，我们返回实例
+                            ms_vm_pop(vm);  // 弹出 __init__ 的返回值
+                            vm->stack_top = call_stack_base;
+                            ms_vm_push(vm, instance_val);
+                            
+                            // 重新获取当前frame指针（递归调用后可能失效）
+                            frame = &vm->frames[vm->frame_count - 1];
+                        }
+                    } else {
+                        // 没有 __init__，直接返回实例
+                        vm->stack_top -= arg_count + 1;
+                        ms_vm_push(vm, instance_val);
+                    }
+                    break;
+                }
+                
                 // Check if this is a module method call
                 if (func_val.type == MS_VAL_MODULE && vm->last_method_name != NULL) {
                     // Call extension method
@@ -419,15 +977,26 @@ static ms_result_t run(ms_vm_t* vm) {
                 } else if (func_val.type == MS_VAL_NATIVE_FUNC && func_val.as.native_func != NULL) {
                     // 原生函数调用
                     ms_value_t* args = vm->stack_top - arg_count;
+                    ms_value_t* stack_base = vm->stack_top - arg_count - 1;  // 保存栈基址
                     ms_value_t result = func_val.as.native_func->func(vm, arg_count, args);
-                    vm->stack_top -= arg_count + 1;
+                    vm->stack_top = stack_base;  // 恢复到函数调用前
                     ms_vm_push(vm, result);
                 } else if (func_val.type == MS_VAL_FUNCTION) {
                     // 用户定义的函数调用
                     ms_function_t* function = func_val.as.function;
                     
-                    if (arg_count != function->arity) {
-                        runtime_error(vm, "Expected %d arguments but got %d.", function->arity, arg_count);
+                    // 检查参数数量（考虑默认参数）
+                    int min_args = function->arity - function->default_count;
+                    int max_args = function->arity;
+                    
+                    if (arg_count < min_args || arg_count > max_args) {
+                        if (function->default_count > 0) {
+                            runtime_error(vm, "Expected %d to %d arguments but got %d.", 
+                                        min_args, max_args, arg_count);
+                        } else {
+                            runtime_error(vm, "Expected %d arguments but got %d.", 
+                                        function->arity, arg_count);
+                        }
                         return MS_RESULT_RUNTIME_ERROR;
                     }
                     
@@ -436,13 +1005,23 @@ static ms_result_t run(ms_vm_t* vm) {
                         return MS_RESULT_RUNTIME_ERROR;
                     }
                     
+                    // 填充缺失的默认参数
+                    int missing_args = function->arity - arg_count;
+                    if (missing_args > 0) {
+                        // 从defaults数组的末尾开始填充
+                        int default_start = function->default_count - missing_args;
+                        for (int i = 0; i < missing_args; i++) {
+                            ms_vm_push(vm, function->defaults[default_start + i]);
+                        }
+                    }
+                    
                     // 保存栈指针位置（函数和参数之前）
-                    ms_value_t* call_stack_base = vm->stack_top - arg_count - 1;
+                    ms_value_t* call_stack_base = vm->stack_top - function->arity - 1;
                     
                     // 创建新的调用帧
                     ms_call_frame_t* new_frame = &vm->frames[vm->frame_count++];
                     new_frame->ip = function->chunk->code;
-                    new_frame->slots = vm->stack_top - arg_count;
+                    new_frame->slots = vm->stack_top - function->arity;
                     
                     // 保存当前的chunk
                     ms_chunk_t* prev_chunk = vm->chunk;
@@ -463,10 +1042,65 @@ static ms_result_t run(ms_vm_t* vm) {
                     ms_value_t return_value = ms_vm_pop(vm);
                     vm->stack_top = call_stack_base;  // 恢复栈指针到函数调用前
                     ms_vm_push(vm, return_value);      // 推送返回值
+                    
+                    // 重新获取当前frame指针（递归调用后可能失效）
+                    frame = &vm->frames[vm->frame_count - 1];
                 } else {
                     runtime_error(vm, "Can only call functions.");
                     return MS_RESULT_RUNTIME_ERROR;
                 }
+                break;
+            }
+            case OP_ASSERT: {
+                // assert 语句: 栈上有 [condition, message]
+                ms_value_t message = ms_vm_pop(vm);
+                ms_value_t condition = ms_vm_pop(vm);
+                
+                // 检查条件是否为真
+                if (!ms_value_as_bool(condition)) {
+                    // 断言失败
+                    if (ms_value_is_string(message)) {
+                        runtime_error(vm, "AssertionError: %s", ms_value_as_string(message));
+                    } else {
+                        runtime_error(vm, "AssertionError");
+                    }
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                break;
+            }
+            case OP_DELETE: {
+                // del 语句: 删除全局变量
+                uint8_t name_index = READ_BYTE();
+                if (name_index >= name_table_count) {
+                    runtime_error(vm, "Invalid variable name index.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                char* name = name_table_names[name_index];
+                
+                // 查找并删除全局变量
+                ms_global_t* prev = NULL;
+                ms_global_t* current = vm->globals;
+                while (current != NULL) {
+                    if (strcmp(current->name, name) == 0) {
+                        // 找到了，删除它
+                        if (prev == NULL) {
+                            vm->globals = current->next;
+                        } else {
+                            prev->next = current->next;
+                        }
+                        free(current->name);
+                        free(current);
+                        goto deleted_global;
+                    }
+                    prev = current;
+                    current = current->next;
+                }
+                
+                runtime_error(vm, "Undefined variable '%s'.", name);
+                return MS_RESULT_RUNTIME_ERROR;
+                
+            deleted_global:
                 break;
             }
             case OP_RETURN: {
@@ -482,15 +1116,43 @@ static ms_result_t run(ms_vm_t* vm) {
                 ms_value_t obj = ms_vm_pop(vm);
                 const char* prop_name = name_table_names[name_index];
                 
+                // 清除模块方法状态
+                vm->last_method_name = NULL;
+                vm->last_module_name = NULL;
+                
+                // 检查是否是实例对象
+                if (ms_value_is_instance(obj)) {
+                    ms_instance_t* instance = (ms_instance_t*)ms_value_as_instance(obj);
+                    
+                    // 先查找实例属性
+                    if (ms_dict_has(instance->attrs, prop_name)) {
+                        ms_value_t value = ms_dict_get(instance->attrs, prop_name);
+                        ms_vm_push(vm, value);
+                        break;
+                    }
+                    
+                    // 查找方法
+                    if (ms_dict_has(instance->klass->methods, prop_name)) {
+                        ms_value_t method = ms_dict_get(instance->klass->methods, prop_name);
+                        // 创建绑定方法
+                        ms_bound_method_t* bound = ms_bound_method_new(obj, method);
+                        
+                        // 创建绑定方法值
+                        ms_value_t bound_val = ms_value_bound_method(bound);
+                        ms_vm_push(vm, bound_val);
+                        break;
+                    }
+                    
+                    runtime_error(vm, "Undefined property '%s'.", prop_name);
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
                 // If it's a module, store the method name for the call handler
-                if (obj.type == MS_VAL_MODULE) {
+                else if (obj.type == MS_VAL_MODULE) {
                     vm->last_module_name = (const char*)obj.as.module;
                     vm->last_method_name = prop_name;
                     ms_vm_push(vm, obj);
                 } else {
                     // For other types, just return nil
-                    vm->last_method_name = NULL;
-                    vm->last_module_name = NULL;
                     ms_vm_push(vm, ms_value_nil());
                 }
                 break;
@@ -563,6 +1225,55 @@ static ms_result_t run(ms_vm_t* vm) {
                 ms_value_t index_val = ms_vm_pop(vm);
                 ms_value_t obj = ms_vm_pop(vm);
                 
+                // 检查是否是实例对象，如果是则尝试调用 __getitem__ 方法
+                if (ms_value_is_instance(obj)) {
+                    ms_instance_t* instance = (ms_instance_t*)ms_value_as_instance(obj);
+                    
+                    if (ms_dict_has(instance->klass->methods, "__getitem__")) {
+                        ms_value_t getitem_method = ms_dict_get(instance->klass->methods, "__getitem__");
+                        
+                        if (getitem_method.type == MS_VAL_FUNCTION) {
+                            ms_function_t* function = getitem_method.as.function;
+                            
+                            // 调用 __getitem__(self, key)
+                            ms_vm_push(vm, obj);       // self
+                            ms_vm_push(vm, index_val); // key
+                            
+                            // 创建调用帧
+                            if (vm->frame_count >= 64) {
+                                runtime_error(vm, "Stack overflow.");
+                                return MS_RESULT_RUNTIME_ERROR;
+                            }
+                            
+                            ms_value_t* call_stack_base = vm->stack_top - function->arity;
+                            ms_call_frame_t* new_frame = &vm->frames[vm->frame_count++];
+                            new_frame->ip = function->chunk->code;
+                            new_frame->slots = vm->stack_top - function->arity;
+                            
+                            ms_chunk_t* prev_chunk = vm->chunk;
+                            vm->chunk = function->chunk;
+                            
+                            ms_result_t result = run(vm);
+                            
+                            vm->chunk = prev_chunk;
+                            vm->frame_count--;
+                            
+                            if (result != MS_RESULT_OK) {
+                                return result;
+                            }
+                            
+                            // 获取返回值
+                            ms_value_t return_value = ms_vm_pop(vm);
+                            vm->stack_top = call_stack_base;
+                            ms_vm_push(vm, return_value);
+                            
+                            // 重新获取frame指针
+                            frame = &vm->frames[vm->frame_count - 1];
+                            break;
+                        }
+                    }
+                }
+                
                 if (ms_value_is_list(obj)) {
                     if (!ms_value_is_int(index_val)) {
                         runtime_error(vm, "List indices must be integers.");
@@ -596,6 +1307,55 @@ static ms_result_t run(ms_vm_t* vm) {
                 ms_value_t value = ms_vm_pop(vm);
                 ms_value_t index_val = ms_vm_pop(vm);
                 ms_value_t obj = ms_vm_pop(vm);
+                
+                // 检查是否是实例对象，如果是则尝试调用 __setitem__ 方法
+                if (ms_value_is_instance(obj)) {
+                    ms_instance_t* instance = (ms_instance_t*)ms_value_as_instance(obj);
+                    
+                    if (ms_dict_has(instance->klass->methods, "__setitem__")) {
+                        ms_value_t setitem_method = ms_dict_get(instance->klass->methods, "__setitem__");
+                        
+                        if (setitem_method.type == MS_VAL_FUNCTION) {
+                            ms_function_t* function = setitem_method.as.function;
+                            
+                            // 调用 __setitem__(self, key, value)
+                            ms_vm_push(vm, obj);       // self
+                            ms_vm_push(vm, index_val); // key
+                            ms_vm_push(vm, value);     // value
+                            
+                            // 创建调用帧
+                            if (vm->frame_count >= 64) {
+                                runtime_error(vm, "Stack overflow.");
+                                return MS_RESULT_RUNTIME_ERROR;
+                            }
+                            
+                            ms_value_t* call_stack_base = vm->stack_top - function->arity;
+                            ms_call_frame_t* new_frame = &vm->frames[vm->frame_count++];
+                            new_frame->ip = function->chunk->code;
+                            new_frame->slots = vm->stack_top - function->arity;
+                            
+                            ms_chunk_t* prev_chunk = vm->chunk;
+                            vm->chunk = function->chunk;
+                            
+                            ms_result_t result = run(vm);
+                            
+                            vm->chunk = prev_chunk;
+                            vm->frame_count--;
+                            
+                            if (result != MS_RESULT_OK) {
+                                return result;
+                            }
+                            
+                            // 弹出返回值（__setitem__通常返回None）
+                            ms_vm_pop(vm);
+                            vm->stack_top = call_stack_base;
+                            
+                            // 重新获取frame指针
+                            frame = &vm->frames[vm->frame_count - 1];
+                            break;
+                        }
+                    }
+                }
                 
                 if (ms_value_is_list(obj)) {
                     if (!ms_value_is_int(index_val)) {
@@ -902,6 +1662,86 @@ static ms_result_t run(ms_vm_t* vm) {
                 
                 // 推送列表回栈
                 ms_vm_push(vm, list_val);
+                break;
+            }
+            case OP_CLASS: {
+                // 创建类对象
+                const char* name = READ_STRING();
+                ms_class_t* klass = ms_class_new(name);
+                ms_vm_push(vm, ms_value_class(klass));
+                break;
+            }
+            case OP_INHERIT: {
+                // 设置继承关系
+                // 栈顶: [superclass, subclass]
+                ms_value_t superclass = peek(vm, 1);
+                ms_value_t subclass = peek(vm, 0);
+                
+                if (!ms_value_is_class(superclass)) {
+                    runtime_error(vm, "Superclass must be a class.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                if (!ms_value_is_class(subclass)) {
+                    runtime_error(vm, "Subclass must be a class.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                ms_class_t* super = (ms_class_t*)ms_value_as_class(superclass);
+                ms_class_t* sub = (ms_class_t*)ms_value_as_class(subclass);
+                
+                // 设置父类
+                sub->parent = super;
+                
+                // 继承父类的方法（浅拷贝）
+                if (super->methods) {
+                    for (int i = 0; i < super->methods->capacity; i++) {
+                        if (super->methods->entries[i].key != NULL) {
+                            ms_dict_set(sub->methods, super->methods->entries[i].key, 
+                                       super->methods->entries[i].value);
+                        }
+                    }
+                }
+                
+                ms_vm_pop(vm);  // 弹出子类
+                break;
+            }
+            case OP_METHOD: {
+                // 添加方法到类
+                // 栈顶: [class, method]
+                const char* name = READ_STRING();
+                ms_value_t method = peek(vm, 0);
+                ms_value_t class_val = peek(vm, 1);
+                
+                if (!ms_value_is_class(class_val)) {
+                    runtime_error(vm, "Can only add methods to classes.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                ms_class_t* klass = (ms_class_t*)ms_value_as_class(class_val);
+                ms_dict_set(klass->methods, name, method);
+                
+                ms_vm_pop(vm);  // 弹出方法
+                break;
+            }
+            case OP_SET_PROPERTY: {
+                // 设置属性
+                // 栈顶: [instance, value]
+                if (!ms_value_is_instance(peek(vm, 1))) {
+                    runtime_error(vm, "Only instances have properties.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                uint8_t name_index = READ_BYTE();
+                const char* name = name_table_names[name_index];
+                ms_instance_t* instance = (ms_instance_t*)ms_value_as_instance(peek(vm, 1));
+                ms_value_t value = peek(vm, 0);
+                
+                ms_dict_set(instance->attrs, name, value);
+                
+                ms_vm_pop(vm);  // 弹出值
+                ms_vm_pop(vm);  // 弹出实例
+                ms_vm_push(vm, value);  // 推送值回栈
                 break;
             }
         }

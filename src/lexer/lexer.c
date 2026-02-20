@@ -153,10 +153,18 @@ static ms_token_type_t check_keyword(const char* start, int length,
 static ms_token_type_t identifier_type(ms_lexer_t* lexer) {
     switch (lexer->start[0]) {
         case 'a': 
-            if (lexer->current - lexer->start == 2) {
-                return check_keyword(lexer->start + 1, 1, "s", TOKEN_AS);
+            if (lexer->current - lexer->start > 1) {
+                switch (lexer->start[1]) {
+                    case 's': 
+                        if (lexer->current - lexer->start == 2) return TOKEN_AS;
+                        if (lexer->current - lexer->start == 5) return check_keyword(lexer->start + 2, 3, "ync", TOKEN_ASYNC);
+                        if (lexer->current - lexer->start == 6) return check_keyword(lexer->start + 2, 4, "sert", TOKEN_ASSERT);
+                        break;
+                    case 'n': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "d", TOKEN_AND);
+                    case 'w': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "ait", TOKEN_AWAIT);
+                }
             }
-            return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "nd", TOKEN_AND);
+            return TOKEN_IDENTIFIER;
         case 'b': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "reak", TOKEN_BREAK);
         case 'c': 
             if (lexer->current - lexer->start > 1) {
@@ -167,18 +175,32 @@ static ms_token_type_t identifier_type(ms_lexer_t* lexer) {
                 }
             }
             break;
-        case 'd': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "ef", TOKEN_DEF);
+        case 'd': 
+            if (lexer->current - lexer->start > 1) {
+                switch (lexer->start[1]) {
+                    case 'e': 
+                        if (lexer->current - lexer->start == 3) {
+                            if (lexer->start[2] == 'f') return TOKEN_DEF;
+                            if (lexer->start[2] == 'l') return TOKEN_DEL;
+                        }
+                        break;
+                }
+            }
+            return TOKEN_IDENTIFIER;
         case 'e': 
             if (lexer->current - lexer->start > 1) {
-                if (lexer->start[1] == 'l') {
-                    if (lexer->current - lexer->start == 4 && 
-                        lexer->start[2] == 'i' && lexer->start[3] == 'f') {
-                        return TOKEN_ELIF;
-                    }
-                    if (lexer->current - lexer->start == 4 && 
-                        lexer->start[2] == 's' && lexer->start[3] == 'e') {
-                        return TOKEN_ELSE;
-                    }
+                switch (lexer->start[1]) {
+                    case 'l':
+                        if (lexer->current - lexer->start == 4 && 
+                            lexer->start[2] == 'i' && lexer->start[3] == 'f') {
+                            return TOKEN_ELIF;
+                        }
+                        if (lexer->current - lexer->start == 4 && 
+                            lexer->start[2] == 's' && lexer->start[3] == 'e') {
+                            return TOKEN_ELSE;
+                        }
+                        break;
+                    case 'x': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "cept", TOKEN_EXCEPT);
                 }
             }
             return TOKEN_IDENTIFIER;
@@ -188,9 +210,11 @@ static ms_token_type_t identifier_type(ms_lexer_t* lexer) {
                     case 'a': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "lse", TOKEN_FALSE);
                     case 'o': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "r", TOKEN_FOR);
                     case 'r': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "om", TOKEN_FROM);
+                    case 'i': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "nally", TOKEN_FINALLY);
                 }
             }
             break;
+        case 'g': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "lobal", TOKEN_GLOBAL);
         case 'i':
             if (lexer->current - lexer->start > 1) {
                 switch (lexer->start[1]) {
@@ -201,18 +225,39 @@ static ms_token_type_t identifier_type(ms_lexer_t* lexer) {
                 }
             }
             break;
+        case 'l': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "ambda", TOKEN_LAMBDA);
         case 'n':
             if (lexer->current - lexer->start > 1) {
                 switch (lexer->start[1]) {
                     case 'i': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "l", TOKEN_NIL);
-                    case 'o': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "t", TOKEN_NOT);
+                    case 'o': 
+                        if (lexer->current - lexer->start == 3) return check_keyword(lexer->start + 2, 1, "t", TOKEN_NOT);
+                        if (lexer->current - lexer->start == 8) return check_keyword(lexer->start + 2, 6, "nlocal", TOKEN_NONLOCAL);
+                        break;
                 }
             }
             break;
         case 'o': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "r", TOKEN_OR);
         case 'p': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "ass", TOKEN_PASS);
-        case 'r': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "eturn", TOKEN_RETURN);
+        case 'r': 
+            if (lexer->current - lexer->start > 1) {
+                switch (lexer->start[1]) {
+                    case 'e': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "turn", TOKEN_RETURN);
+                    case 'a': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "ise", TOKEN_RAISE);
+                }
+            }
+            return TOKEN_IDENTIFIER;
         case 'm': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "atch", TOKEN_MATCH);
+        case 't': 
+            if (lexer->current - lexer->start > 1) {
+                switch (lexer->start[1]) {
+                    case 'r': 
+                        if (lexer->current - lexer->start == 3) return check_keyword(lexer->start + 2, 1, "y", TOKEN_TRY);
+                        if (lexer->current - lexer->start == 4) return check_keyword(lexer->start + 2, 2, "ue", TOKEN_TRUE);
+                        break;
+                }
+            }
+            return TOKEN_IDENTIFIER;
         case 'F':
             if (lexer->current - lexer->start > 1) {
                 return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "alse", TOKEN_FALSE);
@@ -220,7 +265,6 @@ static ms_token_type_t identifier_type(ms_lexer_t* lexer) {
             break;
         case 'N': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "one", TOKEN_NONE);
         case 'T': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "rue", TOKEN_TRUE);
-        case 't': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "rue", TOKEN_TRUE);
         case 'v': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "ar", TOKEN_VAR);
         case 'w': 
             if (lexer->current - lexer->start > 1) {
@@ -230,6 +274,7 @@ static ms_token_type_t identifier_type(ms_lexer_t* lexer) {
                 }
             }
             break;
+        case 'y': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "ield", TOKEN_YIELD);
     }
     return TOKEN_IDENTIFIER;
 }
@@ -385,12 +430,14 @@ ms_token_t ms_lexer_scan_token(ms_lexer_t* lexer) {
         case '-': return make_token(lexer, TOKEN_MINUS);
         case '+': return make_token(lexer, TOKEN_PLUS);
         case ';': return make_token(lexer, TOKEN_SEMICOLON);
+        case '@': return make_token(lexer, TOKEN_AT);
         case '/':
             return make_token(lexer, match(lexer, '/') ? TOKEN_SLASH_SLASH : TOKEN_SLASH);
         case '*':
             return make_token(lexer, match(lexer, '*') ? TOKEN_STAR_STAR : TOKEN_STAR);
         case '%': return make_token(lexer, TOKEN_PERCENT);
-        case ':': return make_token(lexer, TOKEN_COLON);
+        case ':': 
+            return make_token(lexer, match(lexer, '=') ? TOKEN_WALRUS : TOKEN_COLON);
         case '!':
             return make_token(lexer, match(lexer, '=') ? TOKEN_BANG_EQUAL : TOKEN_BANG);
         case '=':

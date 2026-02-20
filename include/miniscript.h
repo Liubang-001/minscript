@@ -48,7 +48,8 @@ typedef enum {
     MS_VAL_DICT,
     MS_VAL_TUPLE,
     MS_VAL_CLASS,
-    MS_VAL_INSTANCE
+    MS_VAL_INSTANCE,
+    MS_VAL_BOUND_METHOD
 } ms_value_type_t;
 
 // Forward declare collection types
@@ -128,10 +129,14 @@ ms_value_t ms_value_bool(bool value);
 ms_value_t ms_value_int(int64_t value);
 ms_value_t ms_value_float(double value);
 ms_value_t ms_value_string(const char* value);
+ms_value_t ms_value_function(struct ms_function* func);
 ms_value_t ms_value_native_func(ms_native_fn_t func);
 ms_value_t ms_value_list(ms_list_t* list);
 ms_value_t ms_value_dict(ms_dict_t* dict);
 ms_value_t ms_value_tuple(ms_tuple_t* tuple);
+ms_value_t ms_value_class(void* klass);
+ms_value_t ms_value_instance(void* instance);
+ms_value_t ms_value_bound_method(void* bound);
 
 bool ms_value_is_nil(ms_value_t value);
 bool ms_value_is_bool(ms_value_t value);
@@ -142,6 +147,9 @@ bool ms_value_is_function(ms_value_t value);
 bool ms_value_is_list(ms_value_t value);
 bool ms_value_is_dict(ms_value_t value);
 bool ms_value_is_tuple(ms_value_t value);
+bool ms_value_is_class(ms_value_t value);
+bool ms_value_is_instance(ms_value_t value);
+bool ms_value_is_bound_method(ms_value_t value);
 
 bool ms_value_as_bool(ms_value_t value);
 int64_t ms_value_as_int(ms_value_t value);
@@ -150,6 +158,9 @@ const char* ms_value_as_string(ms_value_t value);
 ms_list_t* ms_value_as_list(ms_value_t value);
 ms_dict_t* ms_value_as_dict(ms_value_t value);
 ms_tuple_t* ms_value_as_tuple(ms_value_t value);
+void* ms_value_as_class(ms_value_t value);
+void* ms_value_as_instance(ms_value_t value);
+void* ms_value_as_bound_method(ms_value_t value);
 
 // Collection operations
 ms_list_t* ms_list_new(void);

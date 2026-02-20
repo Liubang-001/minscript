@@ -42,6 +42,7 @@ echo 编译源文件...
 REM 编译所有源文件
 %CC% %CFLAGS% -I%INCLUDE_DIR% -c %SRC_DIR%\core\value.c -o %BUILD_DIR%\core\value.o
 %CC% %CFLAGS% -I%INCLUDE_DIR% -c %SRC_DIR%\core\miniscript.c -o %BUILD_DIR%\core\miniscript.o
+%CC% %CFLAGS% -I%INCLUDE_DIR% -c %SRC_DIR%\core\class.c -o %BUILD_DIR%\core\class.o
 %CC% %CFLAGS% -I%INCLUDE_DIR% -c %SRC_DIR%\lexer\lexer.c -o %BUILD_DIR%\lexer\lexer.o
 %CC% %CFLAGS% -I%INCLUDE_DIR% -c %SRC_DIR%\parser\parser.c -o %BUILD_DIR%\parser\parser.o
 %CC% %CFLAGS% -I%INCLUDE_DIR% -c %SRC_DIR%\vm\vm.c -o %BUILD_DIR%\vm\vm.o

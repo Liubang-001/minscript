@@ -21,6 +21,8 @@ typedef struct {
     ms_chunk_t* chunk;
     int arity;  // 参数个数
     char* name;
+    int default_count;  // 有默认值的参数个数
+    ms_value_t* defaults;  // 默认值数组
 } ms_function_t;
 
 // 字节码指令
@@ -64,6 +66,7 @@ typedef enum {
     OP_RETURN,
     OP_LOAD_MODULE,
     OP_CLASS,
+    OP_INHERIT,
     OP_METHOD,
     OP_BUILD_LIST,
     OP_BUILD_DICT,
@@ -78,6 +81,9 @@ typedef enum {
     OP_DUP,      // 复制栈顶值
     OP_BUILD_LIST_COMP,  // 列表推导式
     OP_LIST_APPEND,  // 向列表添加元素
+    OP_LAMBDA,   // lambda 表达式
+    OP_ASSERT,   // assert 语句
+    OP_DELETE,   // del 语句
 } ms_opcode_t;
 
 // 调用帧

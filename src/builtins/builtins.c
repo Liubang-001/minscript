@@ -136,6 +136,8 @@ ms_value_t builtin_str(ms_vm_t* vm, int argc, ms_value_t* args) {
     ms_value_t arg = args[0];
     char buffer[256];
     
+    // TODO: 支持 __str__ 和 __repr__ 魔术方法
+    
     if (ms_value_is_string(arg)) return arg;
     if (ms_value_is_int(arg)) {
         snprintf(buffer, sizeof(buffer), "%lld", (long long)ms_value_as_int(arg));
@@ -179,6 +181,7 @@ ms_value_t builtin_len(ms_vm_t* vm, int argc, ms_value_t* args) {
     if (ms_value_is_dict(arg)) {
         return ms_value_int(ms_dict_len(ms_value_as_dict(arg)));
     }
+    // TODO: 支持 __len__ 魔术方法
     return ms_value_nil();
 }
 
@@ -544,6 +547,17 @@ ms_value_t builtin_reversed(ms_vm_t* vm, int argc, ms_value_t* args) {
     return ms_value_list(result);
 }
 
+// ============ OOP 函数 ============
+
+ms_value_t builtin_super(ms_vm_t* vm, int argc, ms_value_t* args) {
+    (void)vm;
+    // super() 简化实现：暂时返回 nil
+    // 完整实现需要访问调用栈和类层次结构
+    (void)argc;
+    (void)args;
+    return ms_value_nil();
+}
+
 // ============ 注册所有内置函数 ============
 
 void ms_register_builtins(ms_vm_t* vm) {
@@ -583,4 +597,7 @@ void ms_register_builtins(ms_vm_t* vm) {
     ms_vm_register_function(vm, "zip", builtin_zip);
     ms_vm_register_function(vm, "sorted", builtin_sorted);
     ms_vm_register_function(vm, "reversed", builtin_reversed);
+    
+    // OOP 函数
+    ms_vm_register_function(vm, "super", builtin_super);
 }

@@ -1,4 +1,5 @@
 #include "miniscript.h"
+#include "../vm/vm.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -35,6 +36,13 @@ ms_value_t ms_value_string(const char* str) {
     value.type = MS_VAL_STRING;
     value.as.string = malloc(strlen(str) + 1);
     strcpy(value.as.string, str);
+    return value;
+}
+
+ms_value_t ms_value_function(struct ms_function* func) {
+    ms_value_t value;
+    value.type = MS_VAL_FUNCTION;
+    value.as.function = func;
     return value;
 }
 
@@ -404,4 +412,50 @@ ms_value_t ms_slice_string(const char* str, int start, int stop, int step) {
     ms_value_t val = ms_value_string(result);
     free(result);
     return val;
+}
+
+// 类和实例值操作
+ms_value_t ms_value_class(void* klass) {
+    ms_value_t value;
+    value.type = MS_VAL_CLASS;
+    value.as.object = klass;
+    return value;
+}
+
+ms_value_t ms_value_instance(void* instance) {
+    ms_value_t value;
+    value.type = MS_VAL_INSTANCE;
+    value.as.object = instance;
+    return value;
+}
+
+ms_value_t ms_value_bound_method(void* bound) {
+    ms_value_t value;
+    value.type = MS_VAL_BOUND_METHOD;
+    value.as.object = bound;
+    return value;
+}
+
+bool ms_value_is_class(ms_value_t value) {
+    return value.type == MS_VAL_CLASS;
+}
+
+bool ms_value_is_instance(ms_value_t value) {
+    return value.type == MS_VAL_INSTANCE;
+}
+
+bool ms_value_is_bound_method(ms_value_t value) {
+    return value.type == MS_VAL_BOUND_METHOD;
+}
+
+void* ms_value_as_class(ms_value_t value) {
+    return value.as.object;
+}
+
+void* ms_value_as_instance(ms_value_t value) {
+    return value.as.object;
+}
+
+void* ms_value_as_bound_method(ms_value_t value) {
+    return value.as.object;
 }
