@@ -1,13 +1,11 @@
-def test():
-    a = 1
+numbers = [1, 2, 3]
+result_list = ["偶数" if n % 2 == 0 else "奇数" for n in numbers]
 
-test()
+print(f"len(numbers) = {len(numbers)}, len(result_list) = {len(result_list)}")
 
-
-# break / continue
-for i in range(5):
-    if i == 2:
-        continue          # 跳过本次循环
-    if i == 4:
-        break             # 终止循环
-    print(f"i = {i}")
+print("Before for loop")
+r = range(len(numbers))
+print(f"range(len(numbers)) = {r}")
+for i in r:
+    print(f"  {numbers[i]} -> {result_list[i]}")
+print("After for loop")

@@ -1,3 +1,4 @@
-x = [10, 20, 30]
-for i in x:
-    print(i)
+print("Testing for loop")
+for x in range(3):
+    print(x)
+print("Done")

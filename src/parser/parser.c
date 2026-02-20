@@ -18,11 +18,18 @@ static int emit_jump(ms_parser_t* parser, uint8_t instruction);
 static void patch_jump(ms_parser_t* parser, int offset);
 static void emit_loop(ms_parser_t* parser, int loop_start);
 static void with_statement(ms_parser_t* parser);
+static void match_statement(ms_parser_t* parser);
 static void string(ms_parser_t* parser);
 static void import_statement(ms_parser_t* parser);
 
 static ms_chunk_t* current_chunk(ms_parser_t* parser) {
     return parser->compiling_chunk;
+}
+
+static bool is_alpha(char c) {
+    return (c >= 'a' && c <= 'z') ||
+           (c >= 'A' && c <= 'Z') ||
+           c == '_';
 }
 
 static void error_at(ms_parser_t* parser, ms_token_t* token, const char* message) {
@@ -150,6 +157,9 @@ static int break_count = 0;
 static int continue_jumps[256];  // continue 跳转位置列表
 static int continue_count = 0;
 
+// 列表推导式计数器（用于生成唯一的临时变量名）
+static int listcomp_counter = 0;
+
 static void begin_scope() {
     scope_depth++;
 }
@@ -167,6 +177,48 @@ static void end_scope(ms_parser_t* parser) {
         emit_byte(parser, OP_POP);
         local_count--;
     }
+}
+
+// End scope but keep the top value on stack
+// This is used for list comprehensions where we need to return a value
+static void end_scope_keep_top(ms_parser_t* parser) {
+    scope_depth--;
+    
+    // Count how many locals need to be popped
+    int locals_to_pop = 0;
+    int temp_local_count = local_count;
+    while (temp_local_count > 0 && locals[temp_local_count - 1].depth > scope_depth) {
+        locals_to_pop++;
+        temp_local_count--;
+    }
+    
+    if (locals_to_pop == 0) return;
+    
+    // We need to pop locals_to_pop values from the stack, but keep the top value
+    // Current stack: [..., local0, local1, ..., localN-1, top_value]
+    // We want: [..., top_value]
+    
+    // Strategy: We can't easily manipulate the middle of the stack,
+    // so we'll use a temporary global variable to save the top value
+    
+    // Generate a unique temporary variable name
+    char temp_name[32];
+    snprintf(temp_name, sizeof(temp_name), "__scope_temp_%d__", listcomp_counter++);
+    uint8_t temp_global = add_name(temp_name, strlen(temp_name));
+    
+    // Save top value to temporary global
+    emit_bytes(parser, OP_DEFINE_GLOBAL, temp_global);
+    // DEFINE_GLOBAL doesn't pop, so we need to pop manually
+    emit_byte(parser, OP_POP);
+    
+    // Now pop all the locals
+    for (int i = 0; i < locals_to_pop; i++) {
+        emit_byte(parser, OP_POP);
+        local_count--;
+    }
+    
+    // Restore the top value from temporary global
+    emit_bytes(parser, OP_GET_GLOBAL, temp_global);
 }
 
 static bool identifiers_equal(ms_token_t* a, ms_token_t* b) {
@@ -266,15 +318,154 @@ static void literal(ms_parser_t* parser) {
     }
 }
 
-// Parse list: [1, 2, 3]
+// Parse list: [1, 2, 3] or list comprehension: [expr for var in iterable]
 static void list_literal(ms_parser_t* parser) {
-    int element_count = 0;
+    // Check for empty list
+    if (check(parser, TOKEN_RIGHT_BRACKET)) {
+        consume(parser, TOKEN_RIGHT_BRACKET, "Expect ']'.");
+        emit_bytes(parser, OP_BUILD_LIST, 0);
+        return;
+    }
     
-    if (!check(parser, TOKEN_RIGHT_BRACKET)) {
-        do {
-            expression(parser);
-            element_count++;
-        } while (match(parser, TOKEN_COMMA));
+    // Save the start position of the expression for list comprehension
+    const char* expr_start = parser->current.start;
+    int expr_start_line = parser->current.line;
+    
+    // Try to parse as list comprehension
+    // Parse first expression (but don't emit bytecode yet if it's a list comp)
+    int chunk_size_before = current_chunk(parser)->count;
+    expression(parser);
+    
+    // Check if this is a list comprehension
+    if (check(parser, TOKEN_FOR)) {
+        // This is a list comprehension: [expr for var in iterable]
+        // We need to discard the bytecode we just generated
+        current_chunk(parser)->count = chunk_size_before;
+        
+        // Save the end position of the expression
+        const char* expr_end = parser->previous.start + parser->previous.length;
+        int expr_length = expr_end - expr_start;
+        
+        // Now parse the for clause
+        consume(parser, TOKEN_FOR, "Expect 'for'.");
+        consume(parser, TOKEN_IDENTIFIER, "Expect variable name.");
+        ms_token_t var_name = parser->previous;
+        
+        consume(parser, TOKEN_IN, "Expect 'in' after variable.");
+        
+        // Create a new scope for the loop variable
+        begin_scope();
+        
+        // Parse the iterable expression FIRST (leaves value on stack)
+        expression(parser);
+        
+        // Store iterable in a local variable (value is already on stack from expression())
+        add_local(parser, (ms_token_t){.start = "__iter__", .length = 8});
+        mark_initialized();
+        uint8_t iter_slot = local_count - 1;
+        
+        // Initialize index to 0 (push value on stack)
+        emit_constant(parser, ms_value_int(0));
+        add_local(parser, (ms_token_t){.start = "__index__", .length = 9});
+        mark_initialized();
+        uint8_t index_slot = local_count - 1;
+        
+        // Add loop variable as local (initialize with NIL)
+        emit_byte(parser, OP_NIL);
+        add_local(parser, var_name);
+        mark_initialized();
+        uint8_t var_slot = local_count - 1;
+        
+        // Create a new list - keep it on stack, NOT as a local variable
+        emit_bytes(parser, OP_BUILD_LIST, 0);
+        // Stack: [..., iter, index, var, list]
+        // Note: list is NOT a local variable, just on the stack
+        
+        // Loop start
+        int loop_start = current_chunk(parser)->count;
+        
+        // Emit FOR_ITER_LOCAL instruction
+        emit_bytes(parser, OP_FOR_ITER_LOCAL, var_slot);
+        emit_byte(parser, iter_slot);
+        emit_byte(parser, index_slot);
+        
+        // Jump if no more elements
+        int exit_jump = emit_jump(parser, OP_JUMP_IF_FALSE);
+        emit_byte(parser, OP_POP);  // Pop the boolean result
+        
+        // Duplicate the list (so we can append to it)
+        // Stack: [..., iter, index, var, list, list]
+        emit_byte(parser, OP_DUP);
+        
+        // Re-parse the expression with the loop variable now in scope
+        // Create a temporary lexer for the expression
+        char* expr_copy = malloc(expr_length + 1);
+        memcpy(expr_copy, expr_start, expr_length);
+        expr_copy[expr_length] = '\0';
+        
+        // DEBUG: Print the expression
+        // printf("DEBUG: Reparsing expression: '%s'\n", expr_copy);
+        
+        ms_lexer_t temp_lexer;
+        ms_lexer_init(&temp_lexer, expr_copy);
+        temp_lexer.line = expr_start_line;
+        
+        // Save current parser state
+        ms_lexer_t* original_lexer = parser->lexer;
+        ms_token_t original_current = parser->current;
+        ms_token_t original_previous = parser->previous;
+        
+        // Set up parser to use temporary lexer
+        parser->lexer = &temp_lexer;
+        // Initialize previous to a dummy token
+        parser->previous = (ms_token_t){.type = TOKEN_ERROR, .start = "", .length = 0, .line = expr_start_line};
+        parser->current = ms_lexer_scan_token(&temp_lexer);
+        
+        // Parse the expression
+        expression(parser);
+        
+        // Restore parser state
+        parser->lexer = original_lexer;
+        parser->current = original_current;
+        parser->previous = original_previous;
+        
+        // Free the expression copy
+        free(expr_copy);
+        
+        // Append to list
+        // Stack: [..., iter, index, var, list, list, element]
+        emit_byte(parser, OP_LIST_APPEND);
+        // Stack: [..., iter, index, var, list, list] (LIST_APPEND pops both and pushes list back)
+        emit_byte(parser, OP_POP);  // Pop the returned list
+        // Stack: [..., iter, index, var, list]
+        
+        // Loop back
+        emit_loop(parser, loop_start);
+        
+        // Patch exit jump
+        patch_jump(parser, exit_jump);
+        emit_byte(parser, OP_POP);  // Pop the boolean result
+        
+        // Now we need to clean up the locals and leave the list on stack
+        // Current stack: [..., iter, index, var, list]
+        // We want: [..., list]
+        
+        // Use end_scope_keep_top to pop locals but keep the list
+        end_scope_keep_top(parser);
+        
+        // Now the result list is on top of the stack
+        
+        consume(parser, TOKEN_RIGHT_BRACKET, "Expect ']' after list comprehension.");
+        return;
+    }
+    
+    // Regular list: [expr, expr, ...]
+    int element_count = 1;
+    
+    while (match(parser, TOKEN_COMMA)) {
+        if (check(parser, TOKEN_RIGHT_BRACKET)) break;
+        expression(parser);
+        element_count++;
     }
     
     consume(parser, TOKEN_RIGHT_BRACKET, "Expect ']' after list elements.");
@@ -738,6 +929,15 @@ static void parse_precedence(ms_parser_t* parser, ms_precedence_t precedence) {
         ms_parse_fn_t infix_rule = get_rule(parser->previous.type)->infix;
         infix_rule(parser);
     }
+    
+    // 检查三元表达式: value_if_true if condition else value_if_false
+    if (precedence <= PREC_TERNARY && check(parser, TOKEN_IF)) {
+        advance(parser);  // 消费 if
+        expression(parser);  // 解析条件
+        consume(parser, TOKEN_ELSE, "Expect 'else' in ternary expression.");
+        parse_precedence(parser, PREC_TERNARY);  // 解析 value_if_false
+        emit_byte(parser, OP_TERNARY);
+    }
 }
 
 static ms_parse_rule_t* get_rule(ms_token_type_t type) {
@@ -1127,9 +1327,91 @@ static void emit_loop(ms_parser_t* parser, int loop_start) {
     emit_byte(parser, offset & 0xff);
 }
 
+static void match_statement(ms_parser_t* parser) {
+    // match expression:
+    //     case pattern1:
+    //         statements
+    //     case pattern2:
+    //         statements
+    //     case _:
+    //         statements
+    
+    expression(parser);
+    consume(parser, TOKEN_COLON, "Expect ':' after match expression.");
+    consume(parser, TOKEN_NEWLINE, "Expect newline after ':'.");
+    skip_newlines(parser);
+    consume(parser, TOKEN_INDENT, "Expect indent after match:");
+    
+    int exit_jumps[256];
+    int exit_jump_count = 0;
+    
+    while (match(parser, TOKEN_CASE)) {
+        // case pattern:
+        // 对于简单实现，我们支持字面量和通配符 _
+        
+        if (check(parser, TOKEN_IDENTIFIER) && parser->current.length == 1 && parser->current.start[0] == '_') {
+            // 通配符 _，总是匹配
+            advance(parser);
+            emit_byte(parser, OP_POP);  // 弹出之前的比较结果
+            emit_byte(parser, OP_TRUE);  // 推送 true
+        } else {
+            // 字面量或表达式
+            // 复制栈顶的值用于比较
+            emit_byte(parser, OP_DUP);
+            expression(parser);
+            emit_byte(parser, OP_EQUAL);
+        }
+        
+        consume(parser, TOKEN_COLON, "Expect ':' after case pattern.");
+        consume(parser, TOKEN_NEWLINE, "Expect newline after ':'.");
+        
+        int case_jump = emit_jump(parser, OP_JUMP_IF_FALSE);
+        emit_byte(parser, OP_POP);  // 弹出比较结果
+        emit_byte(parser, OP_POP);  // 弹出原始值
+        
+        begin_scope();
+        skip_newlines(parser);
+        consume(parser, TOKEN_INDENT, "Expect indent after case:");
+        
+        while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
+            skip_newlines(parser);
+            if (check(parser, TOKEN_DEDENT) || check(parser, TOKEN_EOF)) break;
+            declaration(parser);
+        }
+        
+        if (!check(parser, TOKEN_EOF)) {
+            consume(parser, TOKEN_DEDENT, "Expect dedent after case block.");
+        }
+        end_scope(parser);
+        
+        // case 块执行后，跳到 match 结束
+        exit_jumps[exit_jump_count++] = emit_jump(parser, OP_JUMP);
+        
+        // patch case 条件为假时的跳转到下一个 case
+        patch_jump(parser, case_jump);
+        emit_byte(parser, OP_POP);  // 弹出比较结果
+        
+        skip_newlines(parser);
+    }
+    
+    // 如果没有任何 case 匹配，弹出原始值
+    emit_byte(parser, OP_POP);
+    
+    if (!check(parser, TOKEN_EOF)) {
+        consume(parser, TOKEN_DEDENT, "Expect dedent after match block.");
+    }
+    
+    // patch 所有的 exit jumps 到这里
+    for (int i = 0; i < exit_jump_count; i++) {
+        patch_jump(parser, exit_jumps[i]);
+    }
+}
+
 static void statement(ms_parser_t* parser) {
     if (match(parser, TOKEN_IF)) {
         if_statement(parser);
+    } else if (match(parser, TOKEN_MATCH)) {
+        match_statement(parser);
     } else if (match(parser, TOKEN_WHILE)) {
         while_statement(parser);
     } else if (match(parser, TOKEN_FOR)) {

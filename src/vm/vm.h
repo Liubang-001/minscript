@@ -74,6 +74,10 @@ typedef enum {
     OP_FOR_ITER,
     OP_FOR_ITER_LOCAL,
     OP_FOR_END,
+    OP_TERNARY,  // 三元表达式
+    OP_DUP,      // 复制栈顶值
+    OP_BUILD_LIST_COMP,  // 列表推导式
+    OP_LIST_APPEND,  // 向列表添加元素
 } ms_opcode_t;
 
 // 调用帧

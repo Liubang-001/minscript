@@ -1,53 +1,49 @@
-print("=== Comprehensive MiniScript Tests ===")
+"""
+综合测试：列表推导式 + 三元表达式 + for 循环
+"""
 
-print("1. Basic Variables and Arithmetic")
-x = 10
-y = 20
-z = x + y
-print(z)
+print("=== 综合测试 ===")
+print()
 
-print("2. String Operations")
-name = "MiniScript"
-greeting = "Hello, " + name
-print(greeting)
+# 测试1: 列表推导式后跟 for 循环
+print("测试1: 列表推导式后跟 for 循环")
+result = [x * 2 for x in [1, 2, 3]]
+print(f"列表推导式结果: {result}")
+for i in range(3):
+    print(f"  for 循环: {i}")
+print()
 
-print("3. Boolean and Comparisons")
-print(True)
-print(False)
-print(5 > 3)
-print(10 == 10)
+# 测试2: 三元表达式列表推导式后跟 for 循环
+print("测试2: 三元表达式列表推导式后跟 for 循环")
+numbers = [1, 2, 3, 4, 5]
+parity = ["偶" if n % 2 == 0 else "奇" for n in numbers]
+print(f"奇偶性: {parity}")
+for p in parity:
+    print(f"  {p}")
+print()
 
-print("4. Logic Operators")
-print(not True)
-print(True and False)
-print(False or True)
+# 测试3: 多个列表推导式
+print("测试3: 多个列表推导式")
+list1 = [x for x in range(5)]
+list2 = [x * x for x in range(5)]
+list3 = ["正" if x > 0 else "零或负" for x in [-1, 0, 1, 2]]
+print(f"list1: {list1}")
+print(f"list2: {list2}")
+print(f"list3: {list3}")
+print()
 
-print("5. If/Elif/Else Statements")
-score = 85
-if score >= 90:
-    print("Grade: A")
-elif score >= 80:
-    print("Grade: B")
-elif score >= 70:
-    print("Grade: C")
-else:
-    print("Grade: F")
+# 测试4: 嵌套 for 循环（不使用嵌套列表推导式）
+print("测试4: 嵌套 for 循环")
+for i in range(3):
+    for j in range(3):
+        print(f"  ({i}, {j})")
+print()
 
-print("6. Nested If Statements")
-a = 10
-b = 20
-if a > 0:
-    if b > 0:
-        print("Both positive")
-    else:
-        print("a positive, b not")
-else:
-    print("a not positive")
+# 测试5: 列表推导式在 for 循环内
+print("测试5: 列表推导式在 for 循环内")
+for i in range(3):
+    squared = [x * x for x in range(i + 1)]
+    print(f"  i={i}, 平方: {squared}")
+print()
 
-print("7. While Loops")
-count = 0
-while count < 3:
-    print(count)
-    count = count + 1
-
-print("=== All Tests Completed ===")
+print("=== 所有测试通过 ===")

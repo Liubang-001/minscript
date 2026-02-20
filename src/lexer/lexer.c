@@ -161,6 +161,7 @@ static ms_token_type_t identifier_type(ms_lexer_t* lexer) {
         case 'c': 
             if (lexer->current - lexer->start > 1) {
                 switch (lexer->start[1]) {
+                    case 'a': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "se", TOKEN_CASE);
                     case 'l': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "ass", TOKEN_CLASS);
                     case 'o': return check_keyword(lexer->start + 2, lexer->current - lexer->start - 2, "ntinue", TOKEN_CONTINUE);
                 }
@@ -211,6 +212,7 @@ static ms_token_type_t identifier_type(ms_lexer_t* lexer) {
         case 'o': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "r", TOKEN_OR);
         case 'p': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "ass", TOKEN_PASS);
         case 'r': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "eturn", TOKEN_RETURN);
+        case 'm': return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "atch", TOKEN_MATCH);
         case 'F':
             if (lexer->current - lexer->start > 1) {
                 return check_keyword(lexer->start + 1, lexer->current - lexer->start - 1, "alse", TOKEN_FALSE);
