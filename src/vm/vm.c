@@ -377,6 +377,202 @@ static ms_result_t run(ms_vm_t* vm) {
                 BINARY_OP(ms_value_bool, <);
                 break;
             }
+            case OP_LESS_EQUAL: {
+                ms_value_t b = peek(vm, 0);
+                ms_value_t a = peek(vm, 1);
+                
+                // 检查是否是实例对象，如果是则尝试调用 __le__ 方法
+                if (ms_value_is_instance(a)) {
+                    ms_instance_t* instance = (ms_instance_t*)ms_value_as_instance(a);
+                    
+                    if (ms_dict_has(instance->klass->methods, "__le__")) {
+                        ms_value_t le_method = ms_dict_get(instance->klass->methods, "__le__");
+                        
+                        if (le_method.type == MS_VAL_FUNCTION) {
+                            ms_function_t* function = le_method.as.function;
+                            
+                            // 创建调用帧
+                            if (vm->frame_count >= 64) {
+                                runtime_error(vm, "Stack overflow.");
+                                return MS_RESULT_RUNTIME_ERROR;
+                            }
+                            
+                            ms_value_t* call_stack_base = vm->stack_top - function->arity;
+                            ms_call_frame_t* new_frame = &vm->frames[vm->frame_count++];
+                            new_frame->ip = function->chunk->code;
+                            new_frame->slots = vm->stack_top - function->arity;
+                            
+                            ms_chunk_t* prev_chunk = vm->chunk;
+                            vm->chunk = function->chunk;
+                            
+                            ms_result_t result = run(vm);
+                            
+                            vm->chunk = prev_chunk;
+                            vm->frame_count--;
+                            
+                            if (result != MS_RESULT_OK) {
+                                return result;
+                            }
+                            
+                            ms_value_t return_value = ms_vm_pop(vm);
+                            vm->stack_top = call_stack_base;
+                            ms_vm_push(vm, return_value);
+                            
+                            frame = &vm->frames[vm->frame_count - 1];
+                            break;
+                        }
+                    }
+                }
+                
+                BINARY_OP(ms_value_bool, <=);
+                break;
+            }
+            case OP_GREATER_EQUAL: {
+                ms_value_t b = peek(vm, 0);
+                ms_value_t a = peek(vm, 1);
+                
+                // 检查是否是实例对象，如果是则尝试调用 __ge__ 方法
+                if (ms_value_is_instance(a)) {
+                    ms_instance_t* instance = (ms_instance_t*)ms_value_as_instance(a);
+                    
+                    if (ms_dict_has(instance->klass->methods, "__ge__")) {
+                        ms_value_t ge_method = ms_dict_get(instance->klass->methods, "__ge__");
+                        
+                        if (ge_method.type == MS_VAL_FUNCTION) {
+                            ms_function_t* function = ge_method.as.function;
+                            
+                            // 创建调用帧
+                            if (vm->frame_count >= 64) {
+                                runtime_error(vm, "Stack overflow.");
+                                return MS_RESULT_RUNTIME_ERROR;
+                            }
+                            
+                            ms_value_t* call_stack_base = vm->stack_top - function->arity;
+                            ms_call_frame_t* new_frame = &vm->frames[vm->frame_count++];
+                            new_frame->ip = function->chunk->code;
+                            new_frame->slots = vm->stack_top - function->arity;
+                            
+                            ms_chunk_t* prev_chunk = vm->chunk;
+                            vm->chunk = function->chunk;
+                            
+                            ms_result_t result = run(vm);
+                            
+                            vm->chunk = prev_chunk;
+                            vm->frame_count--;
+                            
+                            if (result != MS_RESULT_OK) {
+                                return result;
+                            }
+                            
+                            ms_value_t return_value = ms_vm_pop(vm);
+                            vm->stack_top = call_stack_base;
+                            ms_vm_push(vm, return_value);
+                            
+                            frame = &vm->frames[vm->frame_count - 1];
+                            break;
+                        }
+                    }
+                }
+                
+                BINARY_OP(ms_value_bool, >=);
+                break;
+            }
+            case OP_IN: {
+                ms_value_t container = peek(vm, 0);  // Top of stack (right operand)
+                ms_value_t item = peek(vm, 1);       // Below top (left operand)
+                
+                // 检查是否是实例对象，如果是则尝试调用 __contains__ 方法
+                if (ms_value_is_instance(container)) {
+                    ms_instance_t* instance = (ms_instance_t*)ms_value_as_instance(container);
+                    
+                    if (ms_dict_has(instance->klass->methods, "__contains__")) {
+                        ms_value_t contains_method = ms_dict_get(instance->klass->methods, "__contains__");
+                        
+                        if (contains_method.type == MS_VAL_FUNCTION) {
+                            ms_function_t* function = contains_method.as.function;
+                            
+                            // 调用 __contains__(self, item)
+                            // 栈上是 [item, container]，需要调整为 [container, item]
+                            ms_vm_pop(vm);  // container
+                            ms_vm_pop(vm);  // item
+                            ms_vm_push(vm, container);  // self
+                            ms_vm_push(vm, item);       // parameter
+                            
+                            // 创建调用帧
+                            if (vm->frame_count >= 64) {
+                                runtime_error(vm, "Stack overflow.");
+                                return MS_RESULT_RUNTIME_ERROR;
+                            }
+                            
+                            ms_value_t* call_stack_base = vm->stack_top - 2;
+                            ms_call_frame_t* new_frame = &vm->frames[vm->frame_count++];
+                            new_frame->ip = function->chunk->code;
+                            new_frame->slots = vm->stack_top - 2;
+                            
+                            ms_chunk_t* prev_chunk = vm->chunk;
+                            vm->chunk = function->chunk;
+                            
+                            ms_result_t result = run(vm);
+                            
+                            vm->chunk = prev_chunk;
+                            vm->frame_count--;
+                            
+                            if (result != MS_RESULT_OK) {
+                                return result;
+                            }
+                            
+                            ms_value_t return_value = ms_vm_pop(vm);
+                            vm->stack_top = call_stack_base;
+                            ms_vm_push(vm, return_value);
+                            
+                            frame = &vm->frames[vm->frame_count - 1];
+                            break;
+                        }
+                    }
+                }
+                
+                // 默认行为：检查列表、元组、字典、字符串
+                // 先弹出操作数
+                ms_vm_pop(vm);  // container
+                ms_vm_pop(vm);  // item
+                
+                bool found = false;
+                
+                if (ms_value_is_list(container)) {
+                    ms_list_t* list = ms_value_as_list(container);
+                    for (int i = 0; i < ms_list_len(list); i++) {
+                        ms_value_t elem = ms_list_get(list, i);
+                        if (values_equal(item, elem)) {
+                            found = true;
+                            break;
+                        }
+                    }
+                } else if (ms_value_is_tuple(container)) {
+                    ms_tuple_t* tuple = ms_value_as_tuple(container);
+                    for (int i = 0; i < ms_tuple_len(tuple); i++) {
+                        ms_value_t elem = ms_tuple_get(tuple, i);
+                        if (values_equal(item, elem)) {
+                            found = true;
+                            break;
+                        }
+                    }
+                } else if (ms_value_is_dict(container)) {
+                    if (ms_value_is_string(item)) {
+                        ms_dict_t* dict = ms_value_as_dict(container);
+                        found = ms_dict_has(dict, ms_value_as_string(item));
+                    }
+                } else if (ms_value_is_string(container) && ms_value_is_string(item)) {
+                    const char* haystack = ms_value_as_string(container);
+                    const char* needle = ms_value_as_string(item);
+                    found = (strstr(haystack, needle) != NULL);
+                } else {
+                    runtime_error(vm, "Argument of type '%s' is not iterable.", "unknown");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                ms_vm_push(vm, ms_value_bool(found));
+                break;
+            }
             case OP_ADD: {
                 ms_value_t b = peek(vm, 0);
                 ms_value_t a = peek(vm, 1);
@@ -1219,6 +1415,33 @@ static ms_result_t run(ms_vm_t* vm) {
                 }
                 vm->stack_top -= count;
                 ms_vm_push(vm, ms_value_tuple(tuple));
+                break;
+            }
+            case OP_BUILD_SET: {
+                uint8_t count = READ_BYTE();
+                ms_set_t* set = ms_set_new();
+                for (int i = 0; i < count; i++) {
+                    ms_set_add(set, vm->stack_top[-count + i]);
+                }
+                vm->stack_top -= count;
+                ms_vm_push(vm, ms_value_set(set));
+                break;
+            }
+            case OP_SET_ADD: {
+                // Stack: [set, element]
+                ms_value_t element = ms_vm_pop(vm);
+                ms_value_t set_val = ms_vm_pop(vm);
+                
+                if (!ms_value_is_set(set_val)) {
+                    runtime_error(vm, "Can only add to sets.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                ms_set_t* set = ms_value_as_set(set_val);
+                ms_set_add(set, element);
+                
+                // Push set back
+                ms_vm_push(vm, set_val);
                 break;
             }
             case OP_INDEX_GET: {

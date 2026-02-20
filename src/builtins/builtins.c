@@ -61,6 +61,16 @@ static void print_value(ms_value_t value, int depth) {
             printf("}");
             break;
         }
+        case MS_VAL_SET: {
+            ms_set_t* set = ms_value_as_set(value);
+            printf("{");
+            for (int i = 0; i < ms_set_len(set); i++) {
+                if (i > 0) printf(", ");
+                print_value(set->entries[i].value, depth + 1);
+            }
+            printf("}");
+            break;
+        }
         default:
             printf("<object>");
             break;
@@ -270,6 +280,35 @@ ms_value_t builtin_dict(ms_vm_t* vm, int argc, ms_value_t* args) {
     (void)argc;
     (void)args;
     return ms_value_dict(ms_dict_new());
+}
+
+ms_value_t builtin_set(ms_vm_t* vm, int argc, ms_value_t* args) {
+    (void)vm;
+    if (argc == 0) return ms_value_set(ms_set_new());
+    
+    // Convert iterable to set
+    ms_value_t arg = args[0];
+    ms_set_t* set = ms_set_new();
+    
+    if (ms_value_is_list(arg)) {
+        ms_list_t* list = ms_value_as_list(arg);
+        for (int i = 0; i < ms_list_len(list); i++) {
+            ms_set_add(set, ms_list_get(list, i));
+        }
+    } else if (ms_value_is_tuple(arg)) {
+        ms_tuple_t* tuple = ms_value_as_tuple(arg);
+        for (int i = 0; i < ms_tuple_len(tuple); i++) {
+            ms_set_add(set, ms_tuple_get(tuple, i));
+        }
+    } else if (ms_value_is_set(arg)) {
+        // Copy set
+        ms_set_t* src = ms_value_as_set(arg);
+        for (int i = 0; i < ms_set_len(src); i++) {
+            ms_set_add(set, src->entries[i].value);
+        }
+    }
+    
+    return ms_value_set(set);
 }
 
 // ============ 数学函数 ============
@@ -577,6 +616,7 @@ void ms_register_builtins(ms_vm_t* vm) {
     ms_vm_register_function(vm, "list", builtin_list);
     ms_vm_register_function(vm, "tuple", builtin_tuple);
     ms_vm_register_function(vm, "dict", builtin_dict);
+    ms_vm_register_function(vm, "set", builtin_set);
     
     // 数学函数
     ms_vm_register_function(vm, "abs", builtin_abs);

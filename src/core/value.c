@@ -2,6 +2,7 @@
 #include "../vm/vm.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 // 创建值
 ms_value_t ms_value_nil(void) {
@@ -140,6 +141,13 @@ ms_value_t ms_value_tuple(ms_tuple_t* tuple) {
     return value;
 }
 
+ms_value_t ms_value_set(ms_set_t* set) {
+    ms_value_t value;
+    value.type = MS_VAL_SET;
+    value.as.set = set;
+    return value;
+}
+
 // Collection type checks
 bool ms_value_is_list(ms_value_t value) {
     return value.type == MS_VAL_LIST;
@@ -151,6 +159,10 @@ bool ms_value_is_dict(ms_value_t value) {
 
 bool ms_value_is_tuple(ms_value_t value) {
     return value.type == MS_VAL_TUPLE;
+}
+
+bool ms_value_is_set(ms_value_t value) {
+    return value.type == MS_VAL_SET;
 }
 
 // Collection value conversions
@@ -171,6 +183,13 @@ ms_dict_t* ms_value_as_dict(ms_value_t value) {
 ms_tuple_t* ms_value_as_tuple(ms_value_t value) {
     if (value.type == MS_VAL_TUPLE) {
         return value.as.tuple;
+    }
+    return NULL;
+}
+
+ms_set_t* ms_value_as_set(ms_value_t value) {
+    if (value.type == MS_VAL_SET) {
+        return value.as.set;
     }
     return NULL;
 }
@@ -458,4 +477,104 @@ void* ms_value_as_instance(ms_value_t value) {
 
 void* ms_value_as_bound_method(ms_value_t value) {
     return value.as.object;
+}
+
+// Set operations
+// Helper function to convert value to string key for hashing
+static char* value_to_key(ms_value_t value) {
+    static char buffer[256];
+    switch (value.type) {
+        case MS_VAL_INT:
+            sprintf(buffer, "i:%lld", (long long)value.as.integer);
+            break;
+        case MS_VAL_FLOAT:
+            sprintf(buffer, "f:%g", value.as.floating);
+            break;
+        case MS_VAL_STRING:
+            sprintf(buffer, "s:%s", value.as.string);
+            break;
+        case MS_VAL_BOOL:
+            sprintf(buffer, "b:%d", value.as.boolean);
+            break;
+        case MS_VAL_NIL:
+            sprintf(buffer, "n:nil");
+            break;
+        default:
+            sprintf(buffer, "o:%p", (void*)&value);
+            break;
+    }
+    return buffer;
+}
+
+ms_set_t* ms_set_new(void) {
+    ms_set_t* set = malloc(sizeof(ms_set_t));
+    set->entries = NULL;
+    set->count = 0;
+    set->capacity = 0;
+    return set;
+}
+
+void ms_set_free(ms_set_t* set) {
+    if (set) {
+        for (int i = 0; i < set->count; i++) {
+            free(set->entries[i].key);
+        }
+        free(set->entries);
+        free(set);
+    }
+}
+
+bool ms_set_add(ms_set_t* set, ms_value_t value) {
+    char* key = value_to_key(value);
+    
+    // Check if already exists
+    for (int i = 0; i < set->count; i++) {
+        if (strcmp(set->entries[i].key, key) == 0) {
+            return false;  // Already exists
+        }
+    }
+    
+    // Add new entry
+    if (set->count >= set->capacity) {
+        set->capacity = set->capacity == 0 ? 8 : set->capacity * 2;
+        set->entries = realloc(set->entries, set->capacity * sizeof(ms_dict_entry_t));
+    }
+    
+    set->entries[set->count].key = malloc(strlen(key) + 1);
+    strcpy(set->entries[set->count].key, key);
+    set->entries[set->count].value = value;
+    set->count++;
+    return true;
+}
+
+bool ms_set_remove(ms_set_t* set, ms_value_t value) {
+    char* key = value_to_key(value);
+    
+    for (int i = 0; i < set->count; i++) {
+        if (strcmp(set->entries[i].key, key) == 0) {
+            free(set->entries[i].key);
+            // Shift remaining elements
+            for (int j = i; j < set->count - 1; j++) {
+                set->entries[j] = set->entries[j + 1];
+            }
+            set->count--;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ms_set_contains(ms_set_t* set, ms_value_t value) {
+    char* key = value_to_key(value);
+    
+    for (int i = 0; i < set->count; i++) {
+        if (strcmp(set->entries[i].key, key) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int ms_set_len(ms_set_t* set) {
+    return set->count;
 }

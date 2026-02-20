@@ -44,6 +44,9 @@ typedef enum {
     OP_EQUAL,
     OP_GREATER,
     OP_LESS,
+    OP_GREATER_EQUAL,  // >=
+    OP_LESS_EQUAL,     // <=
+    OP_IN,             // in 运算符
     OP_ADD,
     OP_SUBTRACT,
     OP_MULTIPLY,
@@ -71,6 +74,8 @@ typedef enum {
     OP_BUILD_LIST,
     OP_BUILD_DICT,
     OP_BUILD_TUPLE,
+    OP_BUILD_SET,
+    OP_SET_ADD,
     OP_INDEX_GET,
     OP_INDEX_SET,
     OP_SLICE_GET,
@@ -81,6 +86,7 @@ typedef enum {
     OP_DUP,      // 复制栈顶值
     OP_BUILD_LIST_COMP,  // 列表推导式
     OP_LIST_APPEND,  // 向列表添加元素
+    OP_BUILD_DICT_COMP,  // 字典推导式
     OP_LAMBDA,   // lambda 表达式
     OP_ASSERT,   // assert 语句
     OP_DELETE,   // del 语句

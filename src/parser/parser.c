@@ -294,9 +294,10 @@ static void binary(ms_parser_t* parser) {
         case TOKEN_BANG_EQUAL:    emit_bytes(parser, OP_EQUAL, OP_NOT); break;
         case TOKEN_EQUAL_EQUAL:   emit_byte(parser, OP_EQUAL); break;
         case TOKEN_GREATER:       emit_byte(parser, OP_GREATER); break;
-        case TOKEN_GREATER_EQUAL: emit_bytes(parser, OP_LESS, OP_NOT); break;
+        case TOKEN_GREATER_EQUAL: emit_byte(parser, OP_GREATER_EQUAL); break;
         case TOKEN_LESS:          emit_byte(parser, OP_LESS); break;
-        case TOKEN_LESS_EQUAL:    emit_bytes(parser, OP_GREATER, OP_NOT); break;
+        case TOKEN_LESS_EQUAL:    emit_byte(parser, OP_LESS_EQUAL); break;
+        case TOKEN_IN:            emit_byte(parser, OP_IN); break;
         case TOKEN_PLUS:          emit_byte(parser, OP_ADD); break;
         case TOKEN_MINUS:         emit_byte(parser, OP_SUBTRACT); break;
         case TOKEN_STAR:          emit_byte(parser, OP_MULTIPLY); break;
@@ -357,7 +358,8 @@ static void list_literal(ms_parser_t* parser) {
         begin_scope();
         
         // Parse the iterable expression FIRST (leaves value on stack)
-        expression(parser);
+        // Use PREC_COMPARISON + 1 to avoid parsing 'in' as part of the expression
+        parse_precedence(parser, PREC_COMPARISON + 1);
         
         // Store iterable in a local variable (value is already on stack from expression())
         add_local(parser, (ms_token_t){.start = "__iter__", .length = 8});
@@ -474,11 +476,152 @@ static void list_literal(ms_parser_t* parser) {
 
 // Parse dict: {"key": value, ...}
 static void dict_literal(ms_parser_t* parser) {
-    int pair_count = 0;
+    // Check for empty dict (by convention, {} is dict not set)
+    if (check(parser, TOKEN_RIGHT_BRACE)) {
+        consume(parser, TOKEN_RIGHT_BRACE, "Expect '}'.");
+        emit_bytes(parser, OP_BUILD_DICT, 0);
+        return;
+    }
     
-    if (!check(parser, TOKEN_RIGHT_BRACE)) {
-        do {
-            // Parse key (must be string)
+    // Save the start position for potential comprehension
+    const char* first_expr_start = parser->current.start;
+    int first_expr_start_line = parser->current.line;
+    int chunk_size_before = current_chunk(parser)->count;
+    
+    // Parse first element/key
+    if (parser->current.type == TOKEN_STRING) {
+        advance(parser);
+        string(parser);
+    } else {
+        expression(parser);
+    }
+    
+    // Save first element end position
+    const char* first_expr_end = parser->previous.start + parser->previous.length;
+    
+    // Determine what kind of literal this is
+    if (check(parser, TOKEN_COLON)) {
+        // Dictionary literal or dict comprehension: {key: value, ...}
+        consume(parser, TOKEN_COLON, "Expect ':'.");
+        
+        // Save value start position
+        const char* value_start = parser->current.start;
+        int value_start_line = parser->current.line;
+        
+        // Parse value
+        expression(parser);
+        
+        // Save value end position
+        const char* value_end = parser->previous.start + parser->previous.length;
+        
+        // Check if this is a dictionary comprehension
+        if (check(parser, TOKEN_FOR)) {
+            // Dict comprehension: {key: value for var in iterable}
+            current_chunk(parser)->count = chunk_size_before;
+            
+            int key_length = first_expr_end - first_expr_start;
+            int value_length = value_end - value_start;
+            
+            consume(parser, TOKEN_FOR, "Expect 'for'.");
+            consume(parser, TOKEN_IDENTIFIER, "Expect variable name.");
+            ms_token_t var_name = parser->previous;
+            
+            consume(parser, TOKEN_IN, "Expect 'in' after variable.");
+            
+            begin_scope();
+            
+            parse_precedence(parser, PREC_COMPARISON + 1);
+            
+            add_local(parser, (ms_token_t){.start = "__iter__", .length = 8});
+            mark_initialized();
+            uint8_t iter_slot = local_count - 1;
+            
+            emit_constant(parser, ms_value_int(0));
+            add_local(parser, (ms_token_t){.start = "__index__", .length = 9});
+            mark_initialized();
+            uint8_t index_slot = local_count - 1;
+            
+            emit_byte(parser, OP_NIL);
+            add_local(parser, var_name);
+            mark_initialized();
+            uint8_t var_slot = local_count - 1;
+            
+            emit_bytes(parser, OP_BUILD_DICT, 0);
+            
+            int loop_start = current_chunk(parser)->count;
+            
+            emit_bytes(parser, OP_FOR_ITER_LOCAL, var_slot);
+            emit_byte(parser, iter_slot);
+            emit_byte(parser, index_slot);
+            
+            int exit_jump = emit_jump(parser, OP_JUMP_IF_FALSE);
+            emit_byte(parser, OP_POP);
+            
+            emit_byte(parser, OP_DUP);
+            
+            // Re-parse key expression
+            char* key_copy = malloc(key_length + 1);
+            memcpy(key_copy, first_expr_start, key_length);
+            key_copy[key_length] = '\0';
+            
+            ms_lexer_t temp_lexer_key;
+            ms_lexer_init(&temp_lexer_key, key_copy);
+            temp_lexer_key.line = first_expr_start_line;
+            
+            ms_lexer_t* original_lexer = parser->lexer;
+            ms_token_t original_current = parser->current;
+            ms_token_t original_previous = parser->previous;
+            
+            parser->lexer = &temp_lexer_key;
+            parser->previous = (ms_token_t){.type = TOKEN_ERROR, .start = "", .length = 0, .line = first_expr_start_line};
+            parser->current = ms_lexer_scan_token(&temp_lexer_key);
+            
+            expression(parser);
+            
+            parser->lexer = original_lexer;
+            parser->current = original_current;
+            parser->previous = original_previous;
+            free(key_copy);
+            
+            // Re-parse value expression
+            char* value_copy = malloc(value_length + 1);
+            memcpy(value_copy, value_start, value_length);
+            value_copy[value_length] = '\0';
+            
+            ms_lexer_t temp_lexer_value;
+            ms_lexer_init(&temp_lexer_value, value_copy);
+            temp_lexer_value.line = value_start_line;
+            
+            parser->lexer = &temp_lexer_value;
+            parser->previous = (ms_token_t){.type = TOKEN_ERROR, .start = "", .length = 0, .line = value_start_line};
+            parser->current = ms_lexer_scan_token(&temp_lexer_value);
+            
+            expression(parser);
+            
+            parser->lexer = original_lexer;
+            parser->current = original_current;
+            parser->previous = original_previous;
+            free(value_copy);
+            
+            emit_byte(parser, OP_INDEX_SET);
+            
+            emit_loop(parser, loop_start);
+            
+            patch_jump(parser, exit_jump);
+            emit_byte(parser, OP_POP);
+            
+            end_scope_keep_top(parser);
+            
+            consume(parser, TOKEN_RIGHT_BRACE, "Expect '}' after dict comprehension.");
+            return;
+        }
+        
+        // Regular dictionary literal
+        int pair_count = 1;
+        
+        while (match(parser, TOKEN_COMMA)) {
+            if (check(parser, TOKEN_RIGHT_BRACE)) break;
+            
             if (parser->current.type == TOKEN_STRING) {
                 advance(parser);
                 string(parser);
@@ -488,15 +631,107 @@ static void dict_literal(ms_parser_t* parser) {
             }
             
             consume(parser, TOKEN_COLON, "Expect ':' after dictionary key.");
-            
-            // Parse value
             expression(parser);
             pair_count++;
-        } while (match(parser, TOKEN_COMMA));
+        }
+        
+        consume(parser, TOKEN_RIGHT_BRACE, "Expect '}' after dictionary elements.");
+        emit_bytes(parser, OP_BUILD_DICT, pair_count);
+        
+    } else if (check(parser, TOKEN_FOR)) {
+        // Set comprehension: {expr for var in iterable}
+        current_chunk(parser)->count = chunk_size_before;
+        
+        int expr_length = first_expr_end - first_expr_start;
+        
+        consume(parser, TOKEN_FOR, "Expect 'for'.");
+        consume(parser, TOKEN_IDENTIFIER, "Expect variable name.");
+        ms_token_t var_name = parser->previous;
+        
+        consume(parser, TOKEN_IN, "Expect 'in' after variable.");
+        
+        begin_scope();
+        
+        parse_precedence(parser, PREC_COMPARISON + 1);
+        
+        add_local(parser, (ms_token_t){.start = "__iter__", .length = 8});
+        mark_initialized();
+        uint8_t iter_slot = local_count - 1;
+        
+        emit_constant(parser, ms_value_int(0));
+        add_local(parser, (ms_token_t){.start = "__index__", .length = 9});
+        mark_initialized();
+        uint8_t index_slot = local_count - 1;
+        
+        emit_byte(parser, OP_NIL);
+        add_local(parser, var_name);
+        mark_initialized();
+        uint8_t var_slot = local_count - 1;
+        
+        emit_bytes(parser, OP_BUILD_SET, 0);
+        
+        int loop_start = current_chunk(parser)->count;
+        
+        emit_bytes(parser, OP_FOR_ITER_LOCAL, var_slot);
+        emit_byte(parser, iter_slot);
+        emit_byte(parser, index_slot);
+        
+        int exit_jump = emit_jump(parser, OP_JUMP_IF_FALSE);
+        emit_byte(parser, OP_POP);
+        
+        emit_byte(parser, OP_DUP);
+        
+        // Re-parse expression
+        char* expr_copy = malloc(expr_length + 1);
+        memcpy(expr_copy, first_expr_start, expr_length);
+        expr_copy[expr_length] = '\0';
+        
+        ms_lexer_t temp_lexer;
+        ms_lexer_init(&temp_lexer, expr_copy);
+        temp_lexer.line = first_expr_start_line;
+        
+        ms_lexer_t* original_lexer = parser->lexer;
+        ms_token_t original_current = parser->current;
+        ms_token_t original_previous = parser->previous;
+        
+        parser->lexer = &temp_lexer;
+        parser->previous = (ms_token_t){.type = TOKEN_ERROR, .start = "", .length = 0, .line = first_expr_start_line};
+        parser->current = ms_lexer_scan_token(&temp_lexer);
+        
+        expression(parser);
+        
+        parser->lexer = original_lexer;
+        parser->current = original_current;
+        parser->previous = original_previous;
+        free(expr_copy);
+        
+        // Add to set (need a SET_ADD opcode or use a different approach)
+        // For now, we'll emit bytecode to call a helper
+        emit_byte(parser, OP_SET_ADD);
+        emit_byte(parser, OP_POP);
+        
+        emit_loop(parser, loop_start);
+        
+        patch_jump(parser, exit_jump);
+        emit_byte(parser, OP_POP);
+        
+        end_scope_keep_top(parser);
+        
+        consume(parser, TOKEN_RIGHT_BRACE, "Expect '}' after set comprehension.");
+        
+    } else {
+        // Set literal: {1, 2, 3}
+        int element_count = 1;
+        
+        while (match(parser, TOKEN_COMMA)) {
+            if (check(parser, TOKEN_RIGHT_BRACE)) break;
+            expression(parser);
+            element_count++;
+        }
+        
+        consume(parser, TOKEN_RIGHT_BRACE, "Expect '}' after set elements.");
+        emit_bytes(parser, OP_BUILD_SET, element_count);
     }
-    
-    consume(parser, TOKEN_RIGHT_BRACE, "Expect '}' after dictionary elements.");
-    emit_bytes(parser, OP_BUILD_DICT, pair_count);
 }
 
 // Parse tuple: (1, 2, 3)
@@ -998,7 +1233,7 @@ ms_parse_rule_t rules[] = {
     [TOKEN_WHILE]         = {NULL,     NULL,      PREC_NONE},
     [TOKEN_DEF]           = {NULL,     NULL,      PREC_NONE},
     [TOKEN_PASS]          = {NULL,     NULL,      PREC_NONE},
-    [TOKEN_IN]            = {NULL,     NULL,      PREC_NONE},
+    [TOKEN_IN]            = {NULL,     binary,    PREC_COMPARISON},
     [TOKEN_NOT]           = {unary,    NULL,      PREC_NONE},
     [TOKEN_IS]            = {NULL,     NULL,      PREC_NONE},
     [TOKEN_LAMBDA]        = {lambda_expression, NULL, PREC_NONE},
@@ -1260,7 +1495,8 @@ static void for_statement(ms_parser_t* parser) {
     uint8_t var_slot = local_count - 1;
     
     // Parse the iterable expression (leaves value on stack)
-    expression(parser);
+    // Use PREC_COMPARISON + 1 to avoid parsing 'in' as part of the expression
+    parse_precedence(parser, PREC_COMPARISON + 1);
     
     // Store iterable in a local variable (slot 1) - value is already on stack
     add_local(parser, (ms_token_t){.start = "__iter__", .length = 8});

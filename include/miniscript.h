@@ -47,6 +47,7 @@ typedef enum {
     MS_VAL_LIST,
     MS_VAL_DICT,
     MS_VAL_TUPLE,
+    MS_VAL_SET,
     MS_VAL_CLASS,
     MS_VAL_INSTANCE,
     MS_VAL_BOUND_METHOD
@@ -56,6 +57,7 @@ typedef enum {
 typedef struct ms_list_s ms_list_t;
 typedef struct ms_dict_s ms_dict_t;
 typedef struct ms_tuple_s ms_tuple_t;
+typedef struct ms_set_s ms_set_t;
 
 // 原生函数类型 (must be after ms_value_t forward declaration)
 typedef ms_value_t (*ms_native_fn_t)(ms_vm_t* vm, int argc, ms_value_t* args);
@@ -81,6 +83,7 @@ struct ms_value {
         ms_list_t* list;
         ms_dict_t* dict;
         ms_tuple_t* tuple;
+        ms_set_t* set;
     } as;
 };
 
@@ -110,6 +113,14 @@ struct ms_tuple_s {
     int count;
 };
 
+// Set 结构（无序唯一元素集合）
+// 使用哈希表实现，键是字符串表示，值是原始值
+struct ms_set_s {
+    ms_dict_entry_t* entries;  // 复用dict的entry结构
+    int count;
+    int capacity;
+};
+
 // VM结果类型
 typedef enum {
     MS_RESULT_OK,
@@ -134,6 +145,7 @@ ms_value_t ms_value_native_func(ms_native_fn_t func);
 ms_value_t ms_value_list(ms_list_t* list);
 ms_value_t ms_value_dict(ms_dict_t* dict);
 ms_value_t ms_value_tuple(ms_tuple_t* tuple);
+ms_value_t ms_value_set(ms_set_t* set);
 ms_value_t ms_value_class(void* klass);
 ms_value_t ms_value_instance(void* instance);
 ms_value_t ms_value_bound_method(void* bound);
@@ -147,6 +159,7 @@ bool ms_value_is_function(ms_value_t value);
 bool ms_value_is_list(ms_value_t value);
 bool ms_value_is_dict(ms_value_t value);
 bool ms_value_is_tuple(ms_value_t value);
+bool ms_value_is_set(ms_value_t value);
 bool ms_value_is_class(ms_value_t value);
 bool ms_value_is_instance(ms_value_t value);
 bool ms_value_is_bound_method(ms_value_t value);
@@ -158,6 +171,7 @@ const char* ms_value_as_string(ms_value_t value);
 ms_list_t* ms_value_as_list(ms_value_t value);
 ms_dict_t* ms_value_as_dict(ms_value_t value);
 ms_tuple_t* ms_value_as_tuple(ms_value_t value);
+ms_set_t* ms_value_as_set(ms_value_t value);
 void* ms_value_as_class(ms_value_t value);
 void* ms_value_as_instance(ms_value_t value);
 void* ms_value_as_bound_method(ms_value_t value);
@@ -181,6 +195,13 @@ ms_tuple_t* ms_tuple_new(int count);
 void ms_tuple_free(ms_tuple_t* tuple);
 ms_value_t ms_tuple_get(ms_tuple_t* tuple, int index);
 int ms_tuple_len(ms_tuple_t* tuple);
+
+ms_set_t* ms_set_new(void);
+void ms_set_free(ms_set_t* set);
+bool ms_set_add(ms_set_t* set, ms_value_t value);
+bool ms_set_remove(ms_set_t* set, ms_value_t value);
+bool ms_set_contains(ms_set_t* set, ms_value_t value);
+int ms_set_len(ms_set_t* set);
 
 // Slice operations
 ms_value_t ms_slice_list(ms_list_t* list, int start, int stop, int step);

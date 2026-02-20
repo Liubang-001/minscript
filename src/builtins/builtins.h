@@ -18,6 +18,7 @@ ms_value_t builtin_range(ms_vm_t* vm, int argc, ms_value_t* args);
 ms_value_t builtin_list(ms_vm_t* vm, int argc, ms_value_t* args);
 ms_value_t builtin_tuple(ms_vm_t* vm, int argc, ms_value_t* args);
 ms_value_t builtin_dict(ms_vm_t* vm, int argc, ms_value_t* args);
+ms_value_t builtin_set(ms_vm_t* vm, int argc, ms_value_t* args);
 
 // 数学函数
 ms_value_t builtin_abs(ms_vm_t* vm, int argc, ms_value_t* args);
