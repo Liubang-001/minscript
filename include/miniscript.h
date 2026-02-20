@@ -50,7 +50,8 @@ typedef enum {
     MS_VAL_SET,
     MS_VAL_CLASS,
     MS_VAL_INSTANCE,
-    MS_VAL_BOUND_METHOD
+    MS_VAL_BOUND_METHOD,
+    MS_VAL_EXCEPTION
 } ms_value_type_t;
 
 // Forward declare collection types
@@ -58,6 +59,14 @@ typedef struct ms_list_s ms_list_t;
 typedef struct ms_dict_s ms_dict_t;
 typedef struct ms_tuple_s ms_tuple_t;
 typedef struct ms_set_s ms_set_t;
+typedef struct ms_exception_s ms_exception_t;
+
+// Exception structure
+struct ms_exception_s {
+    char* type;        // Exception type (ValueError, TypeError, etc.)
+    char* message;     // Error message
+    int line;          // Line where exception occurred
+};
 
 // 原生函数类型 (must be after ms_value_t forward declaration)
 typedef ms_value_t (*ms_native_fn_t)(ms_vm_t* vm, int argc, ms_value_t* args);
@@ -84,6 +93,7 @@ struct ms_value {
         ms_dict_t* dict;
         ms_tuple_t* tuple;
         ms_set_t* set;
+        ms_exception_t* exception;
     } as;
 };
 
@@ -146,6 +156,7 @@ ms_value_t ms_value_list(ms_list_t* list);
 ms_value_t ms_value_dict(ms_dict_t* dict);
 ms_value_t ms_value_tuple(ms_tuple_t* tuple);
 ms_value_t ms_value_set(ms_set_t* set);
+ms_value_t ms_value_exception(const char* type, const char* message, int line);
 ms_value_t ms_value_class(void* klass);
 ms_value_t ms_value_instance(void* instance);
 ms_value_t ms_value_bound_method(void* bound);
@@ -160,6 +171,7 @@ bool ms_value_is_list(ms_value_t value);
 bool ms_value_is_dict(ms_value_t value);
 bool ms_value_is_tuple(ms_value_t value);
 bool ms_value_is_set(ms_value_t value);
+bool ms_value_is_exception(ms_value_t value);
 bool ms_value_is_class(ms_value_t value);
 bool ms_value_is_instance(ms_value_t value);
 bool ms_value_is_bound_method(ms_value_t value);
@@ -172,6 +184,7 @@ ms_list_t* ms_value_as_list(ms_value_t value);
 ms_dict_t* ms_value_as_dict(ms_value_t value);
 ms_tuple_t* ms_value_as_tuple(ms_value_t value);
 ms_set_t* ms_value_as_set(ms_value_t value);
+ms_exception_t* ms_value_as_exception(ms_value_t value);
 void* ms_value_as_class(ms_value_t value);
 void* ms_value_as_instance(ms_value_t value);
 void* ms_value_as_bound_method(ms_value_t value);
@@ -202,6 +215,8 @@ bool ms_set_add(ms_set_t* set, ms_value_t value);
 bool ms_set_remove(ms_set_t* set, ms_value_t value);
 bool ms_set_contains(ms_set_t* set, ms_value_t value);
 int ms_set_len(ms_set_t* set);
+
+void ms_exception_free(ms_exception_t* exception);
 
 // Slice operations
 ms_value_t ms_slice_list(ms_list_t* list, int start, int stop, int step);

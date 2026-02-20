@@ -71,6 +71,11 @@ static void print_value(ms_value_t value, int depth) {
             printf("}");
             break;
         }
+        case MS_VAL_EXCEPTION: {
+            ms_exception_t* exc = ms_value_as_exception(value);
+            printf("%s: %s", exc->type, exc->message);
+            break;
+        }
         default:
             printf("<object>");
             break;

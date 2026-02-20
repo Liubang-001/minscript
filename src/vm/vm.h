@@ -63,6 +63,9 @@ typedef enum {
     OP_LOOP,
     OP_CALL,
     OP_CALL_METHOD,
+    OP_CALL_DECORATOR,  // 调用装饰器
+    OP_CALL_ENTER,      // 调用 __enter__
+    OP_CALL_EXIT,       // 调用 __exit__
     OP_FUNCTION,
     OP_CLOSURE,
     OP_CLOSE_UPVALUE,
@@ -84,12 +87,17 @@ typedef enum {
     OP_FOR_END,
     OP_TERNARY,  // 三元表达式
     OP_DUP,      // 复制栈顶值
+    OP_SWAP,     // 交换栈顶两个值
     OP_BUILD_LIST_COMP,  // 列表推导式
     OP_LIST_APPEND,  // 向列表添加元素
     OP_BUILD_DICT_COMP,  // 字典推导式
     OP_LAMBDA,   // lambda 表达式
     OP_ASSERT,   // assert 语句
     OP_DELETE,   // del 语句
+    OP_TRY_BEGIN,      // 标记try块开始
+    OP_TRY_END,        // 标记try块结束
+    OP_RAISE,          // 抛出异常
+    OP_JUMP_IF_EXCEPTION,  // 如果有异常则跳转
 } ms_opcode_t;
 
 // 调用帧
@@ -97,6 +105,13 @@ typedef struct {
     uint8_t* ip;
     ms_value_t* slots;
 } ms_call_frame_t;
+
+// 异常处理器
+typedef struct {
+    uint8_t* handler_ip;   // Jump target for exception handler
+    int stack_height;      // Stack height to restore
+    int frame_index;       // Frame index when handler was pushed
+} ms_exception_handler_t;
 
 // 全局变量表
 typedef struct ms_global {
@@ -121,6 +136,12 @@ struct ms_vm {
     int frame_count;
     
     ms_global_t* globals;
+    
+    // Exception handling
+    ms_exception_handler_t exception_handlers[64];
+    int exception_handler_count;
+    ms_value_t current_exception;
+    bool has_exception;
     
     // For tracking module method calls
     const char* last_method_name;

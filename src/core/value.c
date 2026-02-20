@@ -148,6 +148,38 @@ ms_value_t ms_value_set(ms_set_t* set) {
     return value;
 }
 
+// Exception value creation
+ms_value_t ms_value_exception(const char* type, const char* message, int line) {
+    ms_value_t value;
+    value.type = MS_VAL_EXCEPTION;
+    value.as.exception = malloc(sizeof(ms_exception_t));
+    value.as.exception->type = malloc(strlen(type) + 1);
+    strcpy(value.as.exception->type, type);
+    value.as.exception->message = malloc(strlen(message) + 1);
+    strcpy(value.as.exception->message, message);
+    value.as.exception->line = line;
+    return value;
+}
+
+bool ms_value_is_exception(ms_value_t value) {
+    return value.type == MS_VAL_EXCEPTION;
+}
+
+ms_exception_t* ms_value_as_exception(ms_value_t value) {
+    if (value.type == MS_VAL_EXCEPTION) {
+        return value.as.exception;
+    }
+    return NULL;
+}
+
+void ms_exception_free(ms_exception_t* exception) {
+    if (exception) {
+        if (exception->type) free(exception->type);
+        if (exception->message) free(exception->message);
+        free(exception);
+    }
+}
+
 // Collection type checks
 bool ms_value_is_list(ms_value_t value) {
     return value.type == MS_VAL_LIST;

@@ -1247,6 +1247,241 @@ static ms_result_t run(ms_vm_t* vm) {
                 }
                 break;
             }
+            case OP_CALL_DECORATOR: {
+                // Apply decorator to function/class
+                // Stack: [dec1, dec2, ..., decN, target]
+                // depth indicates which decorator to apply (1 = decN, 2 = dec(N-1), etc.)
+                uint8_t depth = READ_BYTE();
+                
+                // Get the target (function or class) from top of stack
+                ms_value_t target = ms_vm_pop(vm);
+                
+                // Get the decorator at position depth from top
+                ms_value_t decorator = *(vm->stack_top - depth);
+                
+                // Remove the decorator from its position
+                for (int i = depth; i > 1; i--) {
+                    *(vm->stack_top - i) = *(vm->stack_top - i + 1);
+                }
+                vm->stack_top--;
+                
+                // Now call decorator(target)
+                ms_vm_push(vm, decorator);
+                ms_vm_push(vm, target);
+                
+                // Check if decorator is callable
+                if (decorator.type != MS_VAL_FUNCTION && decorator.type != MS_VAL_NATIVE_FUNC) {
+                    runtime_error(vm, "Decorator must be callable.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                // Call the decorator with 1 argument
+                if (decorator.type == MS_VAL_NATIVE_FUNC) {
+                    ms_value_t* args = vm->stack_top - 1;
+                    ms_value_t* stack_base = vm->stack_top - 2;
+                    ms_value_t result = decorator.as.native_func->func(vm, 1, args);
+                    vm->stack_top = stack_base;
+                    ms_vm_push(vm, result);
+                } else if (decorator.type == MS_VAL_FUNCTION) {
+                    ms_function_t* function = decorator.as.function;
+                    
+                    if (function->arity != 1) {
+                        runtime_error(vm, "Decorator must take exactly 1 argument.");
+                        return MS_RESULT_RUNTIME_ERROR;
+                    }
+                    
+                    if (vm->frame_count >= 64) {
+                        runtime_error(vm, "Stack overflow.");
+                        return MS_RESULT_RUNTIME_ERROR;
+                    }
+                    
+                    ms_value_t* call_stack_base = vm->stack_top - 2;
+                    ms_call_frame_t* new_frame = &vm->frames[vm->frame_count++];
+                    new_frame->ip = function->chunk->code;
+                    new_frame->slots = vm->stack_top - 1;
+                    
+                    ms_chunk_t* prev_chunk = vm->chunk;
+                    vm->chunk = function->chunk;
+                    
+                    ms_result_t result = run(vm);
+                    
+                    vm->chunk = prev_chunk;
+                    vm->frame_count--;
+                    
+                    if (result != MS_RESULT_OK) {
+                        return result;
+                    }
+                    
+                    ms_value_t return_value = ms_vm_pop(vm);
+                    vm->stack_top = call_stack_base;
+                    ms_vm_push(vm, return_value);
+                    
+                    frame = &vm->frames[vm->frame_count - 1];
+                }
+                
+                break;
+            }
+            case OP_CALL_ENTER: {
+                // Call __enter__() method on context manager
+                // Stack: [manager, manager] (duplicated by parser)
+                ms_value_t manager = peek(vm, 0);
+                
+                // Check if manager is an instance
+                if (!ms_value_is_instance(manager)) {
+                    runtime_error(vm, "Context manager must be an instance.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                ms_instance_t* instance = ms_value_as_instance(manager);
+                
+                // Look up __enter__ method
+                ms_value_t enter_method = ms_value_nil();
+                bool found = false;
+                
+                if (instance->klass && instance->klass->methods) {
+                    for (int i = 0; i < instance->klass->methods->count; i++) {
+                        if (instance->klass->methods->entries[i].key != NULL &&
+                            strcmp(instance->klass->methods->entries[i].key, "__enter__") == 0) {
+                            enter_method = instance->klass->methods->entries[i].value;
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                
+                if (!found) {
+                    runtime_error(vm, "Context manager has no __enter__ method.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                // Check if __enter__ is a function
+                if (enter_method.type != MS_VAL_FUNCTION) {
+                    runtime_error(vm, "__enter__ must be a method.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                ms_function_t* function = enter_method.as.function;
+                
+                // Create call frame for __enter__
+                if (vm->frame_count >= 64) {
+                    runtime_error(vm, "Stack overflow.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                // Stack: [manager, manager] -> push self for method call
+                ms_vm_push(vm, manager);
+                
+                ms_call_frame_t* new_frame = &vm->frames[vm->frame_count++];
+                new_frame->ip = function->chunk->code;
+                new_frame->slots = vm->stack_top - 1;
+                
+                ms_chunk_t* prev_chunk = vm->chunk;
+                vm->chunk = function->chunk;
+                
+                ms_result_t result = run(vm);
+                
+                vm->chunk = prev_chunk;
+                vm->frame_count--;
+                
+                if (result != MS_RESULT_OK) {
+                    return result;
+                }
+                
+                // Get return value from __enter__
+                ms_value_t return_value = ms_vm_pop(vm);
+                
+                // Stack is now [manager, manager] - pop the duplicate, keep original
+                ms_vm_pop(vm);  // Pop the duplicate we used for the call
+                
+                // Stack is now [manager] - push the return value
+                ms_vm_push(vm, return_value);
+                
+                // Stack is now [manager, return_value]
+                // The parser will handle storing return_value or popping it
+                
+                // Refresh frame pointer
+                frame = &vm->frames[vm->frame_count - 1];
+                
+                break;
+            }
+            case OP_CALL_EXIT: {
+                // Call __exit__(None, None, None) method on context manager
+                // Stack: [manager]
+                ms_value_t manager = ms_vm_pop(vm);
+                
+                // Check if manager is an instance
+                if (!ms_value_is_instance(manager)) {
+                    runtime_error(vm, "Context manager must be an instance.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                ms_instance_t* instance = ms_value_as_instance(manager);
+                
+                // Look up __exit__ method
+                ms_value_t exit_method = ms_value_nil();
+                bool found = false;
+                
+                if (instance->klass && instance->klass->methods) {
+                    for (int i = 0; i < instance->klass->methods->count; i++) {
+                        if (instance->klass->methods->entries[i].key != NULL &&
+                            strcmp(instance->klass->methods->entries[i].key, "__exit__") == 0) {
+                            exit_method = instance->klass->methods->entries[i].value;
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                
+                if (!found) {
+                    runtime_error(vm, "Context manager has no __exit__ method.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                // Check if __exit__ is a function
+                if (exit_method.type != MS_VAL_FUNCTION) {
+                    runtime_error(vm, "__exit__ must be a method.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                ms_function_t* function = exit_method.as.function;
+                
+                // Create call frame for __exit__
+                if (vm->frame_count >= 64) {
+                    runtime_error(vm, "Stack overflow.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                
+                // Stack setup: [self, None, None, None] for __exit__(exc_type, exc_val, exc_tb)
+                ms_vm_push(vm, manager);
+                ms_vm_push(vm, ms_value_nil());
+                ms_vm_push(vm, ms_value_nil());
+                ms_vm_push(vm, ms_value_nil());
+                
+                ms_value_t* call_stack_base = vm->stack_top - 4;
+                ms_call_frame_t* new_frame = &vm->frames[vm->frame_count++];
+                new_frame->ip = function->chunk->code;
+                new_frame->slots = vm->stack_top - 4;
+                
+                ms_chunk_t* prev_chunk = vm->chunk;
+                vm->chunk = function->chunk;
+                
+                ms_result_t result = run(vm);
+                
+                vm->chunk = prev_chunk;
+                vm->frame_count--;
+                
+                if (result != MS_RESULT_OK) {
+                    return result;
+                }
+                
+                // Pop return value (we don't use it for now)
+                ms_vm_pop(vm);
+                
+                // Refresh frame pointer
+                frame = &vm->frames[vm->frame_count - 1];
+                
+                break;
+            }
             case OP_ASSERT: {
                 // assert 语句: 栈上有 [condition, message]
                 ms_value_t message = ms_vm_pop(vm);
@@ -1819,6 +2054,18 @@ static ms_result_t run(ms_vm_t* vm) {
                 // 复制栈顶值
                 ms_value_t top = *(vm->stack_top - 1);
                 ms_vm_push(vm, top);
+                break;
+            }
+            case OP_SWAP: {
+                // 交换栈顶两个值
+                if (vm->stack_top - vm->stack < 2) {
+                    runtime_error(vm, "Stack underflow in swap.");
+                    return MS_RESULT_RUNTIME_ERROR;
+                }
+                ms_value_t top = *(vm->stack_top - 1);
+                ms_value_t second = *(vm->stack_top - 2);
+                *(vm->stack_top - 1) = second;
+                *(vm->stack_top - 2) = top;
                 break;
             }
             case OP_BUILD_LIST_COMP: {

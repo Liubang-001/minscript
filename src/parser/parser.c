@@ -1587,23 +1587,60 @@ static void for_statement(ms_parser_t* parser) {
 
 static void with_statement(ms_parser_t* parser) {
     // with expression as variable:
+    // Implements context manager protocol:
+    // 1. Evaluate expression to get context manager
+    // 2. Store manager in a temporary variable
+    // 3. Call __enter__() and bind result to variable
+    // 4. Execute block
+    // 5. Call __exit__(None, None, None) using stored manager
+    
+    // Generate a unique temporary variable name for the manager
+    static int with_counter = 0;
+    char temp_name[32];
+    snprintf(temp_name, sizeof(temp_name), "__with_manager_%d__", with_counter++);
+    
+    // Parse the context manager expression
     expression(parser);
     
-    consume(parser, TOKEN_AS, "Expect 'as' after with expression.");
-    consume(parser, TOKEN_IDENTIFIER, "Expect variable name after 'as'.");
+    // Store the manager in a temporary variable
+    uint8_t manager_var = add_name(temp_name, strlen(temp_name));
+    emit_bytes(parser, OP_DEFINE_GLOBAL, manager_var);
     
-    uint8_t var_index = add_name(parser->previous.start, parser->previous.length);
+    // Load the manager back for __enter__ call
+    emit_bytes(parser, OP_GET_GLOBAL, manager_var);
+    emit_byte(parser, OP_DUP);
+    
+    // Call __enter__() method
+    // Stack: [manager, manager]
+    emit_byte(parser, OP_CALL_ENTER);
+    // Stack: [manager, enter_result]
+    
+    // Pop the manager (we have it stored in temp variable)
+    emit_byte(parser, OP_POP);
+    // Stack: [enter_result]
+    
+    // Handle 'as variable' clause
+    if (match(parser, TOKEN_AS)) {
+        consume(parser, TOKEN_IDENTIFIER, "Expect variable name after 'as'.");
+        uint8_t var_index = add_name(parser->previous.start, parser->previous.length);
+        
+        // Store __enter__() result in variable
+        emit_bytes(parser, OP_DEFINE_GLOBAL, var_index);
+    } else {
+        // No 'as' clause, just pop the __enter__() result
+        emit_byte(parser, OP_POP);
+    }
+    
+    // Stack now: []
     
     consume(parser, TOKEN_COLON, "Expect ':' after with clause.");
     consume(parser, TOKEN_NEWLINE, "Expect newline after ':'.");
     
-    // 将表达式结果存储到变量
-    emit_bytes(parser, OP_DEFINE_GLOBAL, var_index);
-    
     begin_scope();
-    skip_newlines(parser);  // 跳过空行
+    skip_newlines(parser);
     consume(parser, TOKEN_INDENT, "Expect indentation after ':'.");
     
+    // Execute the with block
     while (!check(parser, TOKEN_DEDENT) && !check(parser, TOKEN_EOF)) {
         skip_newlines(parser);
         if (check(parser, TOKEN_DEDENT) || check(parser, TOKEN_EOF)) break;
@@ -1613,6 +1650,15 @@ static void with_statement(ms_parser_t* parser) {
     if (!check(parser, TOKEN_EOF)) {
         consume(parser, TOKEN_DEDENT, "Expect dedent after block.");
     }
+    
+    // Load the manager for __exit__ call
+    emit_bytes(parser, OP_GET_GLOBAL, manager_var);
+    
+    // Call __exit__(None, None, None)
+    // Stack: [manager]
+    emit_byte(parser, OP_CALL_EXIT);
+    // Stack: []
+    
     end_scope(parser);
 }
 
@@ -2192,15 +2238,77 @@ static void function_declaration(ms_parser_t* parser) {
 }
 
 static void declaration(ms_parser_t* parser) {
+    // Check for decorators (@decorator)
+    // For simplicity, we'll handle decorators by:
+    // 1. Parse decorator expression and leave on stack
+    // 2. Parse function/class
+    // 3. Apply decorator by calling it with function/class as argument
+    
+    int decorator_count = 0;
+    
+    while (match(parser, TOKEN_AT)) {
+        // Parse decorator expression
+        expression(parser);
+        decorator_count++;
+        
+        // Expect newline after decorator
+        if (!match(parser, TOKEN_NEWLINE)) {
+            error(parser, "Expect newline after decorator.");
+            return;
+        }
+        skip_newlines(parser);
+        
+        if (decorator_count > 10) {
+            error(parser, "Too many decorators (max 10).");
+            return;
+        }
+    }
+    
     if (match(parser, TOKEN_VAR)) {
+        if (decorator_count > 0) {
+            error(parser, "Cannot decorate variable declarations.");
+            return;
+        }
         var_declaration(parser);
+        
     } else if (match(parser, TOKEN_CLASS)) {
         class_declaration(parser);
+        
+        // Apply decorators to class (from innermost to outermost)
+        // Stack is now: [dec1, dec2, ..., decN, class]
+        // We want: dec1(dec2(...(decN(class))))
+        
+        // Apply decorators from right to left (innermost first)
+        for (int i = 0; i < decorator_count; i++) {
+            // Stack: [dec1, ..., dec(N-i), result]
+            // We need to call dec(N-i)(result)
+            
+            // Use OP_CALL_DECORATOR which handles the stack manipulation
+            emit_bytes(parser, OP_CALL_DECORATOR, decorator_count - i);
+        }
+        
     } else if (match(parser, TOKEN_DEF)) {
         function_declaration(parser);
+        
+        // Apply decorators to function (from innermost to outermost)
+        // Stack is now: [dec1, dec2, ..., decN, function]
+        
+        for (int i = 0; i < decorator_count; i++) {
+            // Use OP_CALL_DECORATOR which handles the stack manipulation
+            emit_bytes(parser, OP_CALL_DECORATOR, decorator_count - i);
+        }
+        
     } else if (match(parser, TOKEN_IMPORT) || check(parser, TOKEN_FROM)) {
+        if (decorator_count > 0) {
+            error(parser, "Cannot decorate import statements.");
+            return;
+        }
         import_statement(parser);
     } else if (match(parser, TOKEN_DEL)) {
+        if (decorator_count > 0) {
+            error(parser, "Cannot decorate del statements.");
+            return;
+        }
         // del 语句: del variable
         if (!match(parser, TOKEN_IDENTIFIER)) {
             error(parser, "Expect variable name after 'del'.");
